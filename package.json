@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "local:up": "bash scripts/local-up.sh"
+    "local:up": "bash scripts/local-up.sh",
+    "local:up:win": "powershell -ExecutionPolicy Bypass -File scripts/local-up.ps1"
   },
   "dependencies": {
     "@prisma/client": "^6.8.2",
