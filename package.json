@@ -9,7 +9,6 @@
     "lint": "next lint",
     "test": "vitest run",
     "local:up": "bash scripts/local-up.sh"
-    "test": "vitest run"
   },
   "dependencies": {
     "@prisma/client": "^6.8.2",
