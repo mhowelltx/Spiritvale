@@ -17,6 +17,7 @@ This command will:
 6. start Next.js in dev mode.
 
 ## Manual local run
+## Local run
 1. Install dependencies.
 2. Copy `.env.example` to `.env` and set `DATABASE_URL`.
 3. Run Prisma migration.
