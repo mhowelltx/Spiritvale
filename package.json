@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "local:up": "bash scripts/local-up.sh"
     "test": "vitest run"
   },
   "dependencies": {

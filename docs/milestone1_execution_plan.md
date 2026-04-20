@@ -31,6 +31,8 @@ Deliver a testable local deployable instance immediately while preserving long-t
 7. [x] Build minimal UI (`/`) for create + tick + events.
 8. [x] Add deterministic test coverage (RNG unit test added; full suite pending install).
 9. [x] Add local runbook section in README.
+10. [x] Add one-command local startup script and Docker Compose DB flow.
+
 
 ## Cloud-ready decisions baked in now
 - 12-factor env config (`DATABASE_URL`, runtime-configured base URL).
