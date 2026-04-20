@@ -3,46 +3,54 @@ $ErrorActionPreference = "Stop"
 $ROOT_DIR = Split-Path -Parent $PSScriptRoot
 Set-Location $ROOT_DIR
 
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Error "Error: docker is required for one-command local startup."
-    exit 1
-}
-
-docker compose version | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Error: docker compose plugin is required."
-    exit 1
-}
-
+# --- .env setup ---
 if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
     Write-Host "Created .env from .env.example"
 }
 
-Write-Host "Starting local Postgres container..."
-docker compose up -d db
+# Load DATABASE_URL from .env
+$envContent = Get-Content ".env" | Where-Object { $_ -match "^DATABASE_URL=" }
+$DATABASE_URL = ($envContent -replace '^DATABASE_URL="?', '') -replace '"?$', ''
 
-Write-Host "Waiting for Postgres health check..."
-$healthy = $false
-for ($i = 0; $i -lt 30; $i++) {
-    $status = docker inspect --format='{{json .State.Health.Status}}' spiritvale-db 2>$null
-    if ($status -eq '"healthy"') {
-        $healthy = $true
-        break
-    }
-    Start-Sleep -Seconds 1
-}
-
-if (-not $healthy) {
-    Write-Error "Error: Postgres did not become healthy in time."
+# Parse connection details from DATABASE_URL
+# Expected: postgresql://user:password@host:port/dbname
+if ($DATABASE_URL -match 'postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/([^?]+)') {
+    $DB_USER = $Matches[1]
+    $DB_PASS = $Matches[2]
+    $DB_HOST = $Matches[3]
+    $DB_PORT = $Matches[4]
+    $DB_NAME = $Matches[5]
+} else {
+    Write-Error "Could not parse DATABASE_URL: $DATABASE_URL"
     exit 1
 }
 
-Write-Host "Installing dependencies (npm install)..."
+$env:PGPASSWORD = $DB_PASS
+
+# --- Check Postgres is reachable ---
+Write-Host "Checking Postgres connection at ${DB_HOST}:${DB_PORT}..."
+pg_isready -h $DB_HOST -p $DB_PORT -U $DB_USER -q
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Cannot reach Postgres at ${DB_HOST}:${DB_PORT}. Make sure your local Postgres server is running."
+    exit 1
+}
+
+# --- Create database if it doesn't exist ---
+$dbExists = psql -h $DB_HOST -p $DB_PORT -U $DB_USER -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME';" 2>$null
+if ($dbExists -ne "1") {
+    Write-Host "Creating database '$DB_NAME'..."
+    createdb -h $DB_HOST -p $DB_PORT -U $DB_USER $DB_NAME
+}
+
+# --- Install dependencies ---
+Write-Host "Installing dependencies..."
 npm install
 
-Write-Host "Applying Prisma migration..."
-npx prisma migrate dev --name init --skip-seed
+# --- Apply migrations ---
+Write-Host "Applying Prisma migrations..."
+npx prisma migrate deploy
 
-Write-Host "Starting Next.js dev server..."
+# --- Start dev server ---
+Write-Host "Starting Next.js dev server at http://localhost:3000"
 npm run dev
