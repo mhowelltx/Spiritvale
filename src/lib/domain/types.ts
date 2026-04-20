@@ -1,10 +1,23 @@
 export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
+export type Sex = 'male' | 'female';
+export type LifeStage = 'child' | 'adult' | 'elder';
+export type Role = 'hunter' | 'gatherer' | 'healer' | 'elder' | 'child';
 
 export interface CreateGameInput {
   seed?: string;
   name?: string;
   startingPopulation?: number;
   startingFood?: number;
+}
+
+export interface VillagerView {
+  id: string;
+  name: string;
+  sex: Sex;
+  ageInDays: number;
+  lifeStage: LifeStage;
+  role: Role;
+  traits: string[];
 }
 
 export interface VillageView {
@@ -20,6 +33,7 @@ export interface VillageView {
     weatherHarsh: number;
     diseaseRisk: number;
   };
+  villagers: VillagerView[];
   events: Array<{
     id: string;
     day: number;

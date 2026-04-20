@@ -15,6 +15,9 @@ package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
+# TypeScript build info
+tsconfig.tsbuildinfo
+
 # misc
 .DS_Store
 *.pem
