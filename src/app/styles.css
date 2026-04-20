@@ -1,0 +1,35 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #13161b;
+  color: #eef1f5;
+}
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+button {
+  margin-right: 8px;
+  padding: 8px 12px;
+}
+
+pre {
+  background: #1e2430;
+  padding: 12px;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.card {
+  border: 1px solid #2b3140;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 12px;
+}
