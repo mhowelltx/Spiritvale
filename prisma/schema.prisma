@@ -20,6 +20,7 @@ model Village {
 
   resources ResourceState?
   events    EventRecord[]
+  villagers Villager[]
 
   @@index([day])
 }
@@ -32,6 +33,21 @@ model ResourceState {
   diseaseRisk   Float
 
   village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
+}
+
+model Villager {
+  id         String  @id @default(uuid())
+  villageId  String
+  name       String
+  sex        String
+  ageInDays  Int
+  lifeStage  String
+  role       String
+  traits     Json
+
+  village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
+
+  @@index([villageId])
 }
 
 model EventRecord {
