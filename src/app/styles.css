@@ -10,26 +10,177 @@ body {
 }
 
 main {
-  max-width: 900px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 24px;
 }
 
-button {
-  margin-right: 8px;
-  padding: 8px 12px;
+h1 { margin-bottom: 8px; }
+h3 { margin: 16px 0 8px; }
+h4 { margin: 0 0 12px; }
+
+/* Controls row */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
-pre {
-  background: #1e2430;
-  padding: 12px;
-  border-radius: 8px;
-  overflow: auto;
+button {
+  padding: 8px 14px;
+  background: #222736;
+  color: #eef1f5;
+  border: 1px solid #3a4258;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
 }
+button:hover:not(:disabled) { background: #2e364f; }
+button:disabled { opacity: 0.45; cursor: default; }
+
+.btn-spirit {
+  background: #2a1f3d;
+  border-color: #6e4fb0;
+  color: #c9a6ff;
+}
+.btn-spirit:hover:not(:disabled) { background: #3a2a55; }
+
+.error { color: #f87171; }
+
+/* Village meta line */
+.village-meta { color: #8a95a8; font-size: 14px; margin: 0 0 12px; }
 
 .card {
   border: 1px solid #2b3140;
   border-radius: 8px;
-  padding: 12px;
+  padding: 16px;
   margin-top: 12px;
 }
+
+/* Spirit action panel */
+.spirit-panel {
+  background: #1a1528;
+  border: 1px solid #4b3575;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+.spirit-panel h3 { margin: 0 0 10px; color: #c9a6ff; }
+.spirit-controls { display: flex; align-items: center; gap: 10px; }
+.spirit-controls label { font-size: 14px; color: #9a8ab8; }
+.spirit-controls select {
+  background: #231c35;
+  color: #eef1f5;
+  border: 1px solid #5a3f8a;
+  border-radius: 5px;
+  padding: 5px 8px;
+}
+.spirit-result {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #e2c96a;
+  font-style: italic;
+}
+
+/* Villager table */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+th {
+  text-align: left;
+  color: #6b7691;
+  border-bottom: 1px solid #2b3140;
+  padding: 6px 8px;
+}
+td { padding: 6px 8px; }
+
+.villager-row { cursor: pointer; }
+.villager-row:hover { background: #1c2133; }
+.villager-row.selected { background: #1e2540; border-left: 3px solid #6e4fb0; }
+
+/* Villager detail panel */
+.villager-detail {
+  background: #161c2b;
+  margin-top: 8px;
+}
+.detail-meta { color: #6b7691; font-size: 13px; font-weight: normal; }
+.detail-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.detail-section { margin-top: 12px; }
+.detail-section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7691;
+  margin: 0 0 6px;
+}
+
+/* Needs/emotions bars */
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+  font-size: 13px;
+}
+.bar-label { width: 72px; color: #9aa3b8; }
+.bar-track {
+  flex: 1;
+  height: 8px;
+  background: #2a3148;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background: #5b7fe0;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.bar-pct { width: 32px; text-align: right; color: #6b7691; font-size: 12px; }
+
+/* Kinship / relationship lists */
+.kin-list, .rel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+.kin-list li, .rel-list li { padding: 3px 0; color: #c4cde0; }
+.kin-kind { color: #6b7691; }
+.rel-type { color: #8a9eb8; }
+
+/* Event list */
+.event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+.event {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid #1e2430;
+}
+.event:last-child { border-bottom: none; }
+.event-day { width: 52px; color: #4e5a72; flex-shrink: 0; }
+.event-icon { width: 16px; text-align: center; flex-shrink: 0; }
+.event-title { color: #c4cde0; }
+
+/* Event type colors */
+.event-villager_death .event-icon { color: #9e6060; }
+.event-villager_birth .event-icon { color: #6aab7a; }
+.event-resource_shortage .event-icon { color: #c49a2a; }
+.event-spirit_intervention .event-icon { color: #a06bdb; }
+.event-household_grief .event-icon { color: #7a8aaa; }
+.event-season_change .event-icon { color: #5b9ecf; }
+.event-world_created .event-icon { color: #e0c060; }

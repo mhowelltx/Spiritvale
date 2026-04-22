@@ -18,46 +18,103 @@ model Village {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  resources ResourceState?
-  events    EventRecord[]
-  villagers Villager[]
+  resources        ResourceState?
+  events           EventRecord[]
+  villagers        Villager[]
+  households       Household[]
+  kinshipLinks     KinshipLink[]
+  relationshipEdges RelationshipEdge[]
 
   @@index([day])
 }
 
 model ResourceState {
-  id            String  @id @default(uuid())
-  villageId     String  @unique
-  food          Float
-  weatherHarsh  Float
-  diseaseRisk   Float
+  id           String @id @default(uuid())
+  villageId    String @unique
+  food         Float
+  weatherHarsh Float
+  diseaseRisk  Float
 
   village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
 }
 
-model Villager {
-  id         String  @id @default(uuid())
-  villageId  String
-  name       String
-  sex        String
-  ageInDays  Int
-  lifeStage  String
-  role       String
-  traits     Json
+model Household {
+  id        String     @id @default(uuid())
+  villageId String
+  name      String
 
-  village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
+  village   Village    @relation(fields: [villageId], references: [id], onDelete: Cascade)
+  villagers Villager[]
 
   @@index([villageId])
 }
 
+model Villager {
+  id          String  @id @default(uuid())
+  villageId   String
+  householdId String?
+  name        String
+  sex         String
+  ageInDays   Int
+  lifeStage   String
+  role        String
+  traits      Json
+  needs       Json    @default("{\"hunger\":0,\"safety\":0.7,\"belonging\":0.5,\"status\":0.5}")
+  emotions    Json    @default("{\"fear\":0.1,\"grief\":0,\"hope\":0.5,\"anger\":0}")
+
+  village   Village   @relation(fields: [villageId], references: [id], onDelete: Cascade)
+  household Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
+
+  kinshipFrom      KinshipLink[]     @relation("KinshipFrom")
+  kinshipTo        KinshipLink[]     @relation("KinshipTo")
+  relationshipFrom RelationshipEdge[] @relation("RelationshipFrom")
+  relationshipTo   RelationshipEdge[] @relation("RelationshipTo")
+
+  @@index([villageId])
+  @@index([householdId])
+}
+
+model KinshipLink {
+  id             String @id @default(uuid())
+  villageId      String
+  fromVillagerId String
+  toVillagerId   String
+  kind           String
+  certainty      Float  @default(1.0)
+
+  village      Village  @relation(fields: [villageId], references: [id], onDelete: Cascade)
+  fromVillager Villager @relation("KinshipFrom", fields: [fromVillagerId], references: [id], onDelete: Cascade)
+  toVillager   Villager @relation("KinshipTo", fields: [toVillagerId], references: [id], onDelete: Cascade)
+
+  @@index([villageId])
+  @@index([fromVillagerId])
+}
+
+model RelationshipEdge {
+  id             String @id @default(uuid())
+  villageId      String
+  fromVillagerId String
+  toVillagerId   String
+  type           String
+  strength       Float  @default(0.5)
+  trust          Float  @default(0.5)
+
+  village      Village  @relation(fields: [villageId], references: [id], onDelete: Cascade)
+  fromVillager Villager @relation("RelationshipFrom", fields: [fromVillagerId], references: [id], onDelete: Cascade)
+  toVillager   Villager @relation("RelationshipTo", fields: [toVillagerId], references: [id], onDelete: Cascade)
+
+  @@index([villageId])
+  @@index([fromVillagerId])
+}
+
 model EventRecord {
-  id         String   @id @default(uuid())
-  villageId  String
-  day        Int
-  type       String
-  title      String
-  facts      Json
-  createdAt  DateTime @default(now())
+  id        String   @id @default(uuid())
+  villageId String
+  day       Int
+  type      String
+  title     String
+  facts     Json
+  createdAt DateTime @default(now())
 
   village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
 
