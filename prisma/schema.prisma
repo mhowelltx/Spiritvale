@@ -18,11 +18,12 @@ model Village {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  resources        ResourceState?
-  events           EventRecord[]
-  villagers        Villager[]
-  households       Household[]
-  kinshipLinks     KinshipLink[]
+  resources         ResourceState?
+  cultureState      CultureState?
+  events            EventRecord[]
+  villagers         Villager[]
+  households        Household[]
+  kinshipLinks      KinshipLink[]
   relationshipEdges RelationshipEdge[]
 
   @@index([day])
@@ -34,6 +35,21 @@ model ResourceState {
   food         Float
   weatherHarsh Float
   diseaseRisk  Float
+
+  village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
+}
+
+model CultureState {
+  id                 String @id @default(uuid())
+  villageId          String @unique
+  sharingNorm        Float  @default(0.6)
+  punishmentSeverity Float  @default(0.4)
+  outsiderTolerance  Float  @default(0.3)
+  prestigeByAge      Float  @default(0.7)
+  prestigeBySkill    Float  @default(0.5)
+  ritualIntensity    Float  @default(0.4)
+  spiritualFear      Float  @default(0.5)
+  kinLoyaltyNorm     Float  @default(0.8)
 
   village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
 }
@@ -61,12 +77,13 @@ model Villager {
   traits      Json
   needs       Json    @default("{\"hunger\":0,\"safety\":0.7,\"belonging\":0.5,\"status\":0.5}")
   emotions    Json    @default("{\"fear\":0.1,\"grief\":0,\"hope\":0.5,\"anger\":0}")
+  motives     Json    @default("[]")
 
-  village   Village   @relation(fields: [villageId], references: [id], onDelete: Cascade)
+  village   Village    @relation(fields: [villageId], references: [id], onDelete: Cascade)
   household Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
 
-  kinshipFrom      KinshipLink[]     @relation("KinshipFrom")
-  kinshipTo        KinshipLink[]     @relation("KinshipTo")
+  kinshipFrom      KinshipLink[]      @relation("KinshipFrom")
+  kinshipTo        KinshipLink[]      @relation("KinshipTo")
   relationshipFrom RelationshipEdge[] @relation("RelationshipFrom")
   relationshipTo   RelationshipEdge[] @relation("RelationshipTo")
 
@@ -91,13 +108,14 @@ model KinshipLink {
 }
 
 model RelationshipEdge {
-  id             String @id @default(uuid())
-  villageId      String
-  fromVillagerId String
-  toVillagerId   String
-  type           String
-  strength       Float  @default(0.5)
-  trust          Float  @default(0.5)
+  id                 String @id @default(uuid())
+  villageId          String
+  fromVillagerId     String
+  toVillagerId       String
+  type               String
+  strength           Float  @default(0.5)
+  trust              Float  @default(0.5)
+  lastInteractionDay Int    @default(0)
 
   village      Village  @relation(fields: [villageId], references: [id], onDelete: Cascade)
   fromVillager Villager @relation("RelationshipFrom", fields: [fromVillagerId], references: [id], onDelete: Cascade)

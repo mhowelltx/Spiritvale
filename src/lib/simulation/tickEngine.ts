@@ -6,7 +6,8 @@ import { stepUpdateVillageResources } from './resourceStep';
 import { stepAgeAndLifeStage } from './agingStep';
 import { stepUpdateNeedsAndEmotions } from './needsEmotionsStep';
 import { stepFinalizeDeathsBirthsHouseholds } from './birthDeathStep';
-import type { TickContext, MutableVillager } from './tickContext';
+import { stepResolveSocialInteractions } from './socialStep';
+import type { TickContext, MutableVillager, MutableRelationshipEdge } from './tickContext';
 import type { VillagerNeeds, VillagerEmotions, VillageView } from '@/lib/domain/types';
 
 export async function runTick(villageId: string): Promise<VillageView | null> {
@@ -16,8 +17,8 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
     include: {
       resources: true,
       villagers: true,
-      // Load kinship links to build household member map
       kinshipLinks: { select: { fromVillagerId: true, toVillagerId: true } },
+      relationshipEdges: true,
     },
   });
 
@@ -57,7 +58,18 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
     emotions: (v.emotions as unknown as VillagerEmotions) ?? { fear: 0.1, grief: 0, hope: 0.5, anger: 0 },
   }));
 
-  // 4. Build tick context
+  // 4. Build mutable relationship edge list
+  const mutableRelationshipEdges: MutableRelationshipEdge[] = current.relationshipEdges.map((e) => ({
+    id: e.id,
+    fromVillagerId: e.fromVillagerId,
+    toVillagerId: e.toVillagerId,
+    type: e.type,
+    strength: e.strength,
+    trust: e.trust,
+    lastInteractionDay: e.lastInteractionDay,
+  }));
+
+  // 5. Build tick context
   const ctx: TickContext = {
     villageId,
     seed: current.seed,
@@ -72,18 +84,21 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
     starving: false,
     villagers: mutableVillagers,
     householdMembersById,
+    relationshipEdges: mutableRelationshipEdges,
     deadIds: [],
     newborns: [],
     updatedVillagers: [],
+    updatedRelationships: [],
     emittedEvents: [],
   };
 
-  // 5. Run steps in order
+  // 6. Run steps in order
   stepAdvanceCalendar(ctx);
   stepUpdateVillageResources(ctx);
   stepAgeAndLifeStage(ctx);
   stepUpdateNeedsAndEmotions(ctx);
   stepFinalizeDeathsBirthsHouseholds(ctx);
+  stepResolveSocialInteractions(ctx);
 
   // 6. Emit daily summary event
   const deadCount = ctx.deadIds.length;
@@ -94,6 +109,7 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
     type: 'daily_tick',
     title: 'Another day passes in Spiritvale.',
     facts: {
+      dailyProduction: Number((ctx.foodAfter - ctx.foodBefore + ctx.dailyConsumption).toFixed(1)),
       dailyConsumption: ctx.dailyConsumption,
       foodBefore: ctx.foodBefore,
       foodAfter: ctx.foodAfter,
@@ -142,6 +158,13 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
           needs: baby.needs as object,
           emotions: baby.emotions as object,
         },
+      })
+    ),
+    // Persist relationship edge changes
+    ...ctx.updatedRelationships.map((r) =>
+      prisma.relationshipEdge.update({
+        where: { id: r.id },
+        data: { strength: r.strength, trust: r.trust, lastInteractionDay: r.lastInteractionDay },
       })
     ),
     // Persist events

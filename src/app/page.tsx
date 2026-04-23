@@ -23,12 +23,26 @@ type VillagerPayload = {
   emotions: VillagerEmotions;
 };
 
+type VillagerMotive = { type: string; label: string; urgency: number };
+
 type VillagerDetailPayload = VillagerPayload & {
   kinship: Array<{ id: string; toVillagerId: string; toVillagerName: string; kind: string; certainty: number }>;
   relationships: Array<{ id: string; toVillagerId: string; toVillagerName: string; type: string; strength: number; trust: number }>;
+  motives: VillagerMotive[];
 };
 
 type HouseholdSummary = { id: string; name: string; memberIds: string[] };
+
+type CultureState = {
+  sharingNorm: number;
+  punishmentSeverity: number;
+  outsiderTolerance: number;
+  prestigeByAge: number;
+  prestigeBySkill: number;
+  ritualIntensity: number;
+  spiritualFear: number;
+  kinLoyaltyNorm: number;
+};
 
 type GamePayload = {
   id: string;
@@ -38,6 +52,7 @@ type GamePayload = {
   season: string;
   population: number;
   resources: { food: number; weatherHarsh: number; diseaseRisk: number };
+  culture: CultureState | null;
   households: HouseholdSummary[];
   villagers: VillagerPayload[];
   events: Array<{ id: string; day: number; type: string; title: string; facts: Record<string, unknown> }>;
@@ -92,7 +107,10 @@ export default function HomePage() {
   const [detailCache, setDetailCache] = useState<Record<string, VillagerDetailPayload>>({});
   const [detailLoading, setDetailLoading] = useState(false);
 
+  const [spiritAction, setSpiritAction] = useState<'cause_famine' | 'send_dream'>('cause_famine');
   const [famineSeverity, setFamineSeverity] = useState<'mild' | 'severe'>('mild');
+  const [dreamTargetId, setDreamTargetId] = useState<string>('');
+  const [dreamIntent, setDreamIntent] = useState<'hope' | 'warning' | 'revelation' | 'fear'>('hope');
   const [spiritResult, setSpiritResult] = useState<string | null>(null);
 
   // --- API helpers ---
@@ -182,6 +200,31 @@ export default function HomePage() {
     }
   }
 
+  async function sendDream() {
+    if (!game || !dreamTargetId) return;
+    setLoading(true);
+    setError(null);
+    setSpiritResult(null);
+    try {
+      const res = await fetch(`/api/game/${game.id}/spirit-action`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'send_dream', targetVillagerId: dreamTargetId, intent: dreamIntent }),
+      });
+      if (!res.ok) throw new Error('Spirit action failed');
+      const updated = await fetchGame(game.id);
+      setGame(updated);
+      const target = game.villagers.find((v) => v.id === dreamTargetId);
+      setSpiritResult(`A dream visited ${target?.name ?? 'the villager'}. Their spirit has shifted.`);
+      // Invalidate cached detail so next click re-fetches updated emotions
+      setDetailCache((c) => { const next = { ...c }; delete next[dreamTargetId]; return next; });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function causeFamine() {
     if (!game) return;
     setLoading(true);
@@ -233,29 +276,96 @@ export default function HomePage() {
             Day {game.day} · Year {game.year} · {game.season}
             &nbsp;|&nbsp; Population: {game.population}
             &nbsp;|&nbsp; Food: {Math.round(game.resources.food)}
+            {(() => {
+              const last = game.events.at(-1);
+              const prod = last?.type === 'daily_tick' ? (last.facts.dailyProduction as number | undefined) : undefined;
+              const cons = last?.type === 'daily_tick' ? (last.facts.dailyConsumption as number | undefined) : undefined;
+              if (prod !== undefined && cons !== undefined) {
+                return <> · +{Math.round(prod)} −{cons}/day</>;
+              }
+              return null;
+            })()}
             &nbsp;|&nbsp; Households: {game.households.length}
           </p>
 
           {/* Spirit Action Panel */}
           <section className="spirit-panel">
             <h3>Spirit Actions</h3>
-            <div className="spirit-controls">
-              <label htmlFor="severity-select">Severity: </label>
-              <select
-                id="severity-select"
-                value={famineSeverity}
-                onChange={(e) => setFamineSeverity(e.target.value as 'mild' | 'severe')}
+            <div className="spirit-action-tabs">
+              <button
+                onClick={() => setSpiritAction('cause_famine')}
+                className={`tab-btn${spiritAction === 'cause_famine' ? ' active' : ''}`}
                 disabled={loading}
-              >
-                <option value="mild">Mild</option>
-                <option value="severe">Severe</option>
-              </select>
-              <button onClick={causeFamine} disabled={loading} className="btn-spirit">
-                ✦ Cause Famine
-              </button>
+              >Cause Famine</button>
+              <button
+                onClick={() => setSpiritAction('send_dream')}
+                className={`tab-btn${spiritAction === 'send_dream' ? ' active' : ''}`}
+                disabled={loading}
+              >Send Dream</button>
             </div>
+            {spiritAction === 'cause_famine' ? (
+              <div className="spirit-controls">
+                <label htmlFor="severity-select">Severity: </label>
+                <select
+                  id="severity-select"
+                  value={famineSeverity}
+                  onChange={(e) => setFamineSeverity(e.target.value as 'mild' | 'severe')}
+                  disabled={loading}
+                >
+                  <option value="mild">Mild</option>
+                  <option value="severe">Severe</option>
+                </select>
+                <button onClick={causeFamine} disabled={loading} className="btn-spirit">
+                  ✦ Cause Famine
+                </button>
+              </div>
+            ) : (
+              <div className="spirit-controls">
+                <label htmlFor="dream-target">Villager: </label>
+                <select
+                  id="dream-target"
+                  value={dreamTargetId}
+                  onChange={(e) => setDreamTargetId(e.target.value)}
+                  disabled={loading}
+                >
+                  <option value="">— select —</option>
+                  {game.villagers.map((v) => (
+                    <option key={v.id} value={v.id}>{v.name} ({v.lifeStage})</option>
+                  ))}
+                </select>
+                <label htmlFor="dream-intent" style={{ marginLeft: '0.5rem' }}>Intent: </label>
+                <select
+                  id="dream-intent"
+                  value={dreamIntent}
+                  onChange={(e) => setDreamIntent(e.target.value as typeof dreamIntent)}
+                  disabled={loading}
+                >
+                  <option value="hope">Hope</option>
+                  <option value="warning">Warning</option>
+                  <option value="revelation">Revelation</option>
+                  <option value="fear">Fear</option>
+                </select>
+                <button onClick={sendDream} disabled={loading || !dreamTargetId} className="btn-spirit">
+                  ✦ Send Dream
+                </button>
+              </div>
+            )}
             {spiritResult ? <p className="spirit-result">{spiritResult}</p> : null}
           </section>
+
+          {/* Culture Panel */}
+          {game.culture ? (
+            <section className="culture-panel">
+              <h3>Village Culture</h3>
+              <div className="culture-bars">
+                <Bar label="Sharing norm"      value={game.culture.sharingNorm} />
+                <Bar label="Kin loyalty"       value={game.culture.kinLoyaltyNorm} />
+                <Bar label="Spiritual fear"    value={game.culture.spiritualFear} />
+                <Bar label="Ritual intensity"  value={game.culture.ritualIntensity} />
+                <Bar label="Outsider tolerance" value={game.culture.outsiderTolerance} />
+              </div>
+            </section>
+          ) : null}
 
           {/* Villager Table */}
           <h3>Villagers ({game.villagers.length})</h3>
@@ -334,6 +444,22 @@ export default function HomePage() {
                         {selectedDetail.relationships.map((r) => (
                           <li key={r.id}>
                             {r.toVillagerName} · <span className="rel-type">{r.type}</span> · strength {Math.round(r.strength * 100)}% · trust {Math.round(r.trust * 100)}%
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {selectedDetail.motives && selectedDetail.motives.length > 0 && (
+                    <div className="detail-section">
+                      <p className="detail-section-label">Motives</p>
+                      <ul className="motive-list">
+                        {selectedDetail.motives.map((m, i) => (
+                          <li key={i} className="motive-item">
+                            <span className="motive-label">{m.label}</span>
+                            <span className={`motive-urgency urgency-${m.urgency >= 0.7 ? 'high' : m.urgency >= 0.4 ? 'mid' : 'low'}`}>
+                              {m.urgency >= 0.7 ? 'urgent' : m.urgency >= 0.4 ? 'present' : 'faint'}
+                            </span>
                           </li>
                         ))}
                       </ul>

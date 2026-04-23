@@ -33,6 +33,16 @@ export interface NewbornData {
   emotions: VillagerEmotions;
 }
 
+export interface MutableRelationshipEdge {
+  id: string;
+  fromVillagerId: string;
+  toVillagerId: string;
+  type: string;
+  strength: number;
+  trust: number;
+  lastInteractionDay: number;
+}
+
 export interface TickContext {
   villageId: string;
   seed: string;
@@ -51,9 +61,12 @@ export interface TickContext {
   villagers: MutableVillager[];
   // kinship: villagerId → ids of household members (from preloaded kinshipLinks)
   householdMembersById: Map<string, string[]>;
+  // relationship edges (mutable during social step)
+  relationshipEdges: MutableRelationshipEdge[];
   // outcomes
   deadIds: string[];
   newborns: NewbornData[];
   updatedVillagers: Array<{ id: string; ageInDays: number; lifeStage: string; needs: VillagerNeeds; emotions: VillagerEmotions }>;
+  updatedRelationships: Array<{ id: string; strength: number; trust: number; lastInteractionDay: number }>;
   emittedEvents: PendingEvent[];
 }

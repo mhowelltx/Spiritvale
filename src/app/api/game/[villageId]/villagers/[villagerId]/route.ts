@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/server/prisma';
 import { mapVillager } from '@/lib/simulation/worldGenerator';
-import type { VillagerDetailView, KinshipLinkView, RelationshipEdgeView, KinshipKind } from '@/lib/domain/types';
+import type { VillagerDetailView, KinshipLinkView, RelationshipEdgeView, KinshipKind, VillagerMotive } from '@/lib/domain/types';
 
 export async function GET(
   _: Request,
@@ -48,6 +48,7 @@ export async function GET(
     trust: r.trust,
   }));
 
-  const detail: VillagerDetailView = { ...base, kinship, relationships };
+  const motives: VillagerMotive[] = (villager.motives as unknown as VillagerMotive[]) ?? [];
+  const detail: VillagerDetailView = { ...base, kinship, relationships, motives };
   return NextResponse.json(detail);
 }

@@ -3,10 +3,14 @@ import { z } from 'zod';
 import { prisma } from '@/lib/server/prisma';
 import { resolveSpiritAction } from '@/lib/simulation/spiritResolver';
 
-const bodySchema = z.object({
-  type: z.literal('cause_famine'),
-  severity: z.enum(['mild', 'severe']),
-});
+const bodySchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('cause_famine'), severity: z.enum(['mild', 'severe']) }),
+  z.object({
+    type: z.literal('send_dream'),
+    targetVillagerId: z.string().uuid(),
+    intent: z.enum(['hope', 'warning', 'revelation', 'fear']),
+  }),
+]);
 
 export async function POST(
   request: Request,

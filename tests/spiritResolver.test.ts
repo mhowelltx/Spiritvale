@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { computeCauseFamineEffect } from '../src/lib/simulation/spiritResolver';
+import { computeCauseFamineEffect, computeSendDreamEffect } from '../src/lib/simulation/spiritResolver';
 import { createSeededRng } from '../src/lib/rng/seededRng';
+import type { VillagerEmotions } from '../src/lib/domain/types';
 
 describe('computeCauseFamineEffect', () => {
   it('reduces food by 30–50% for mild severity', () => {
@@ -58,5 +59,56 @@ describe('computeCauseFamineEffect', () => {
     const b = computeCauseFamineEffect(800, 'mild', rng2);
     expect(a.foodAfter).toBe(b.foodAfter);
     expect(a.reductionFactor).toBe(b.reductionFactor);
+  });
+});
+
+describe('computeSendDreamEffect', () => {
+  const baseEmotions: VillagerEmotions = { fear: 0.3, grief: 0.2, hope: 0.4, anger: 0.1 };
+
+  it('hope intent increases hope and decreases fear', () => {
+    const { emotionChanges } = computeSendDreamEffect(baseEmotions, 'hope');
+    expect(emotionChanges.hope).toBeGreaterThan(0);
+    expect(emotionChanges.fear).toBeLessThan(0);
+  });
+
+  it('warning intent increases fear and decreases hope', () => {
+    const { emotionChanges } = computeSendDreamEffect(baseEmotions, 'warning');
+    expect(emotionChanges.fear).toBeGreaterThan(0);
+    expect(emotionChanges.hope).toBeLessThan(0);
+  });
+
+  it('revelation intent increases hope and decreases fear', () => {
+    const { emotionChanges } = computeSendDreamEffect(baseEmotions, 'revelation');
+    expect(emotionChanges.hope).toBeGreaterThan(0);
+    expect(emotionChanges.fear).toBeLessThan(0);
+  });
+
+  it('fear intent increases fear and anger', () => {
+    const { emotionChanges } = computeSendDreamEffect(baseEmotions, 'fear');
+    expect(emotionChanges.fear).toBeGreaterThan(0);
+    expect(emotionChanges.anger).toBeGreaterThan(0);
+  });
+
+  it('resulting emotions are clamped to [0, 1] after application', () => {
+    const maxEmotions: VillagerEmotions = { fear: 0.95, grief: 0.95, hope: 0.95, anger: 0.95 };
+    const { emotionChanges } = computeSendDreamEffect(maxEmotions, 'fear');
+    const finalFear = maxEmotions.fear + (emotionChanges.fear ?? 0);
+    expect(finalFear).toBeLessThanOrEqual(1.0);
+  });
+
+  it('resulting hope is clamped after hope intent on near-max hope', () => {
+    const highHopeEmotions: VillagerEmotions = { fear: 0.1, grief: 0, hope: 0.9, anger: 0 };
+    const { emotionChanges } = computeSendDreamEffect(highHopeEmotions, 'hope');
+    const finalHope = highHopeEmotions.hope + (emotionChanges.hope ?? 0);
+    expect(finalHope).toBeLessThanOrEqual(1.0);
+  });
+
+  it('deltas are exactly computed for standard values', () => {
+    const emotions: VillagerEmotions = { fear: 0.3, grief: 0.0, hope: 0.4, anger: 0.0 };
+    const { emotionChanges } = computeSendDreamEffect(emotions, 'hope');
+    // hope: clamp(0.4+0.25,0,1) - 0.4 = 0.25
+    expect(emotionChanges.hope).toBeCloseTo(0.25, 5);
+    // fear: clamp(0.3-0.10,0,1) - 0.3 = -0.10
+    expect(emotionChanges.fear).toBeCloseTo(-0.10, 5);
   });
 });

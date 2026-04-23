@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/server/prisma';
 import { generateVillage, mapVillager } from '@/lib/simulation/worldGenerator';
 import { runTick } from '@/lib/simulation/tickEngine';
-import type { CreateGameInput, Season, VillageView, HouseholdSummary } from '@/lib/domain/types';
+import type { CreateGameInput, Season, VillageView, HouseholdSummary, CultureState } from '@/lib/domain/types';
 
 export async function createGame(input: CreateGameInput): Promise<VillageView> {
   return generateVillage(input);
@@ -12,6 +12,7 @@ export async function getGame(villageId: string): Promise<VillageView | null> {
     where: { id: villageId },
     include: {
       resources: true,
+      cultureState: true,
       events: { orderBy: [{ day: 'desc' }, { createdAt: 'desc' }], take: 20 },
       villagers: {
         orderBy: { ageInDays: 'desc' },
@@ -31,6 +32,19 @@ export async function getGame(villageId: string): Promise<VillageView | null> {
     memberIds: h.villagers.map((v) => v.id),
   }));
 
+  const culture: CultureState | null = village.cultureState
+    ? {
+        sharingNorm:        village.cultureState.sharingNorm,
+        punishmentSeverity: village.cultureState.punishmentSeverity,
+        outsiderTolerance:  village.cultureState.outsiderTolerance,
+        prestigeByAge:      village.cultureState.prestigeByAge,
+        prestigeBySkill:    village.cultureState.prestigeBySkill,
+        ritualIntensity:    village.cultureState.ritualIntensity,
+        spiritualFear:      village.cultureState.spiritualFear,
+        kinLoyaltyNorm:     village.cultureState.kinLoyaltyNorm,
+      }
+    : null;
+
   return {
     id: village.id,
     seed: village.seed,
@@ -44,6 +58,7 @@ export async function getGame(villageId: string): Promise<VillageView | null> {
       weatherHarsh: village.resources?.weatherHarsh ?? 0,
       diseaseRisk: village.resources?.diseaseRisk ?? 0,
     },
+    culture,
     households,
     villagers: village.villagers.map((v) =>
       mapVillager({
