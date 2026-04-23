@@ -58,6 +58,31 @@ button:disabled { opacity: 0.45; cursor: default; }
   margin-top: 12px;
 }
 
+/* Play/Pause controls */
+.btn-play {
+  background: #1a2e1a;
+  border-color: #3a7a3a;
+  color: #7ece7e;
+}
+.btn-play:hover:not(:disabled) { background: #223a22; }
+.btn-pause {
+  background: #2e2a10;
+  border-color: #8a7a20;
+  color: #e0c84a;
+}
+.btn-pause:hover:not(:disabled) { background: #3a3510; }
+.speed-select {
+  background: #1a2030;
+  color: #eef1f5;
+  border: 1px solid #3a4258;
+  border-radius: 5px;
+  padding: 5px 8px;
+}
+
+/* Blessing indicator */
+.blessing-indicator { color: #c9a6ff; font-style: italic; }
+.blessing-active { font-size: 13px; color: #c9a6ff; font-style: italic; }
+
 /* Spirit action panel */
 .spirit-panel {
   background: #1a1528;
@@ -218,6 +243,10 @@ td { padding: 6px 8px; }
 .event-title { color: #c4cde0; }
 
 /* Event type colors */
+.event-culture_shift .event-icon { color: #5bc4a0; }
+.event-villager_incident .event-icon { color: #e0a060; }
+.event-relationship_shift .event-icon { color: #6080c0; }
+
 .event-villager_death .event-icon { color: #9e6060; }
 .event-villager_birth .event-icon { color: #6aab7a; }
 .event-resource_shortage .event-icon { color: #c49a2a; }

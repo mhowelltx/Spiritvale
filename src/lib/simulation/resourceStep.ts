@@ -19,12 +19,13 @@ export function computeFoodProduction(
   gatherers: number,
   elders: number,
   season: string,
-  varianceFactor: number
+  varianceFactor: number,
+  blessingMultiplier = 1.0
 ): number {
   const seasonMult = SEASON_MULTIPLIERS[season] ?? 1.0;
   const activeProducers = (hunters + gatherers) * BASE_PRODUCTION_PER_PRODUCER;
   const elderContribution = elders * BASE_PRODUCTION_PER_PRODUCER * ELDER_PRODUCTION_FRACTION;
-  return (activeProducers + elderContribution) * seasonMult * varianceFactor;
+  return (activeProducers + elderContribution) * seasonMult * blessingMultiplier * varianceFactor;
 }
 
 export function stepUpdateVillageResources(ctx: TickContext): void {
@@ -38,11 +39,17 @@ export function stepUpdateVillageResources(ctx: TickContext): void {
 
   // Per-tick deterministic variance: 0.85–1.15
   const varianceFactor = 0.85 + ctx.rng() * 0.30;
+  const blessingMultiplier = ctx.blessingDaysRemaining > 0 ? 1.5 : 1.0;
 
-  const dailyProduction = computeFoodProduction(hunters, gatherers, elders, ctx.season, varianceFactor);
+  const dailyProduction = computeFoodProduction(hunters, gatherers, elders, ctx.season, varianceFactor, blessingMultiplier);
   ctx.dailyConsumption = Math.max(1, Math.ceil(pop * 0.65));
   ctx.foodAfter = clamp(ctx.foodBefore + dailyProduction - ctx.dailyConsumption, 0, FOOD_CAP);
   ctx.starving = ctx.foodAfter <= 0;
+
+  // Decrement blessing counter after applying it
+  if (ctx.blessingDaysRemaining > 0) {
+    ctx.blessingDaysRemaining -= 1;
+  }
 
   if (ctx.starving) {
     ctx.emittedEvents.push({

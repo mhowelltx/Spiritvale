@@ -57,6 +57,7 @@ export async function getGame(villageId: string): Promise<VillageView | null> {
       food: village.resources?.food ?? 0,
       weatherHarsh: village.resources?.weatherHarsh ?? 0,
       diseaseRisk: village.resources?.diseaseRisk ?? 0,
+      blessingDaysRemaining: village.resources?.blessingDaysRemaining ?? 0,
     },
     culture,
     households,

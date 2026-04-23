@@ -10,6 +10,7 @@ const bodySchema = z.discriminatedUnion('type', [
     targetVillagerId: z.string().uuid(),
     intent: z.enum(['hope', 'warning', 'revelation', 'fear']),
   }),
+  z.object({ type: z.literal('bless_harvest') }),
 ]);
 
 export async function POST(

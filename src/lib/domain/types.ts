@@ -103,6 +103,7 @@ export interface VillageView {
     food: number;
     weatherHarsh: number;
     diseaseRisk: number;
+    blessingDaysRemaining: number;
   };
   culture: CultureState | null;
   households: HouseholdSummary[];
@@ -118,7 +119,8 @@ export interface VillageView {
 
 export type SpiritActionInput =
   | { type: 'cause_famine'; severity: FamineSeverity }
-  | { type: 'send_dream'; targetVillagerId: string; intent: 'hope' | 'warning' | 'revelation' | 'fear' };
+  | { type: 'send_dream'; targetVillagerId: string; intent: 'hope' | 'warning' | 'revelation' | 'fear' }
+  | { type: 'bless_harvest' };
 
 export interface SpiritActionResult {
   success: boolean;

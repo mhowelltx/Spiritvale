@@ -122,6 +122,35 @@ export function computeCauseFamineEffect(
 }
 
 // ---------------------------------------------------------------------------
+// Bless Harvest
+// ---------------------------------------------------------------------------
+
+export async function resolveBlessHarvest(
+  villageId: string,
+  currentDay: number
+): Promise<SpiritActionResult> {
+  const resources = await prisma.resourceState.findUnique({ where: { villageId } });
+  if (!resources) throw new Error(`Village ${villageId} not found`);
+
+  const eventId = randomUUID();
+  await prisma.$transaction([
+    prisma.resourceState.update({ where: { villageId }, data: { blessingDaysRemaining: 7 } }),
+    prisma.eventRecord.create({
+      data: {
+        id: eventId,
+        villageId,
+        day: currentDay,
+        type: 'spirit_intervention',
+        title: 'The spirit breathes life into the soil. Abundance follows for seven days.',
+        facts: { spiritAction: 'bless_harvest', blessingDays: 7 },
+      },
+    }),
+  ]);
+
+  return { success: true, eventId, foodAfter: resources.food, affectedVillagerCount: 0 };
+}
+
+// ---------------------------------------------------------------------------
 // Effectful resolver
 // ---------------------------------------------------------------------------
 
@@ -132,6 +161,10 @@ export async function resolveSpiritAction(
 ): Promise<SpiritActionResult> {
   if (input.type === 'send_dream') {
     return resolveSendDream(villageId, input.targetVillagerId, input.intent, currentDay);
+  }
+
+  if (input.type === 'bless_harvest') {
+    return resolveBlessHarvest(villageId, currentDay);
   }
 
   const resources = await prisma.resourceState.findUnique({ where: { villageId } });
