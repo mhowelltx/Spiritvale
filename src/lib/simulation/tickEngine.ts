@@ -7,8 +7,10 @@ import { stepAgeAndLifeStage } from './agingStep';
 import { stepUpdateNeedsAndEmotions } from './needsEmotionsStep';
 import { stepFinalizeDeathsBirthsHouseholds } from './birthDeathStep';
 import { stepResolveSocialInteractions } from './socialStep';
+import { stepDriftCulture } from './cultureStep';
+import { stepResolveMotiveIncidents } from './incidentStep';
 import type { TickContext, MutableVillager, MutableRelationshipEdge } from './tickContext';
-import type { VillagerNeeds, VillagerEmotions, VillageView } from '@/lib/domain/types';
+import type { VillagerNeeds, VillagerEmotions, VillagerMotive, CultureState, VillageView } from '@/lib/domain/types';
 
 export async function runTick(villageId: string): Promise<VillageView | null> {
   // 1. Load current state
@@ -16,6 +18,7 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
     where: { id: villageId },
     include: {
       resources: true,
+      cultureState: true,
       villagers: true,
       kinshipLinks: { select: { fromVillagerId: true, toVillagerId: true } },
       relationshipEdges: true,
@@ -25,7 +28,6 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
   if (!current || !current.resources) return null;
 
   // 2. Build household member map: villagerId → [other member ids in same household]
-  //    We use the villager.householdId to group them (simpler than kinship traversal)
   const householdMembersById = new Map<string, string[]>();
   const byHousehold = new Map<string, string[]>();
   for (const v of current.villagers) {
@@ -37,14 +39,13 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
   for (const v of current.villagers) {
     if (v.householdId) {
       const members = byHousehold.get(v.householdId) ?? [];
-      // Others in the same household (excluding self)
       householdMembersById.set(v.id, members.filter((id) => id !== v.id));
     } else {
       householdMembersById.set(v.id, []);
     }
   }
 
-  // 3. Build mutable villager list
+  // 3. Build mutable villager list (including motives for incident step)
   const mutableVillagers: MutableVillager[] = current.villagers.map((v) => ({
     id: v.id,
     name: v.name,
@@ -56,6 +57,7 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
     householdId: v.householdId,
     needs: (v.needs as unknown as VillagerNeeds) ?? { hunger: 0, safety: 0.7, belonging: 0.5, status: 0.5 },
     emotions: (v.emotions as unknown as VillagerEmotions) ?? { fear: 0.1, grief: 0, hope: 0.5, anger: 0 },
+    motives: (v.motives as unknown as VillagerMotive[]) ?? [],
   }));
 
   // 4. Build mutable relationship edge list
@@ -69,7 +71,21 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
     lastInteractionDay: e.lastInteractionDay,
   }));
 
-  // 5. Build tick context
+  // 5. Build mutable culture state
+  const cultureState: CultureState | null = current.cultureState
+    ? {
+        sharingNorm:        current.cultureState.sharingNorm,
+        punishmentSeverity: current.cultureState.punishmentSeverity,
+        outsiderTolerance:  current.cultureState.outsiderTolerance,
+        prestigeByAge:      current.cultureState.prestigeByAge,
+        prestigeBySkill:    current.cultureState.prestigeBySkill,
+        ritualIntensity:    current.cultureState.ritualIntensity,
+        spiritualFear:      current.cultureState.spiritualFear,
+        kinLoyaltyNorm:     current.cultureState.kinLoyaltyNorm,
+      }
+    : null;
+
+  // 6. Build tick context
   const ctx: TickContext = {
     villageId,
     seed: current.seed,
@@ -82,25 +98,30 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
     foodAfter: current.resources.food,
     dailyConsumption: 0,
     starving: false,
+    blessingDaysRemaining: current.resources.blessingDaysRemaining,
     villagers: mutableVillagers,
     householdMembersById,
     relationshipEdges: mutableRelationshipEdges,
+    cultureState,
     deadIds: [],
     newborns: [],
     updatedVillagers: [],
     updatedRelationships: [],
+    updatedCulture: null,
     emittedEvents: [],
   };
 
-  // 6. Run steps in order
+  // 7. Run steps in order
   stepAdvanceCalendar(ctx);
   stepUpdateVillageResources(ctx);
   stepAgeAndLifeStage(ctx);
   stepUpdateNeedsAndEmotions(ctx);
   stepFinalizeDeathsBirthsHouseholds(ctx);
   stepResolveSocialInteractions(ctx);
+  stepDriftCulture(ctx);
+  stepResolveMotiveIncidents(ctx);
 
-  // 6. Emit daily summary event
+  // 8. Emit daily summary event
   const deadCount = ctx.deadIds.length;
   const birthCount = ctx.newborns.length;
   ctx.emittedEvents.unshift({
@@ -113,6 +134,7 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
       dailyConsumption: ctx.dailyConsumption,
       foodBefore: ctx.foodBefore,
       foodAfter: ctx.foodAfter,
+      blessingDaysRemaining: ctx.blessingDaysRemaining,
       deaths: deadCount,
       births: birthCount,
     },
@@ -120,13 +142,20 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
 
   const survivingCount = ctx.villagers.filter((v) => !ctx.deadIds.includes(v.id)).length + birthCount;
 
-  // 7. Persist all changes in a single transaction
+  // 9. Persist all changes in a single transaction
   await prisma.$transaction([
-    prisma.resourceState.update({ where: { villageId }, data: { food: ctx.foodAfter } }),
+    prisma.resourceState.update({
+      where: { villageId },
+      data: { food: ctx.foodAfter, blessingDaysRemaining: ctx.blessingDaysRemaining },
+    }),
     prisma.village.update({
       where: { id: villageId },
       data: { day: ctx.day, season: ctx.season, year: ctx.year, population: survivingCount },
     }),
+    // Update culture state if it drifted
+    ...(ctx.updatedCulture && current.cultureState
+      ? [prisma.cultureState.update({ where: { villageId }, data: ctx.updatedCulture })]
+      : []),
     // Delete dead villagers (cascade removes their kinship/relationship rows)
     ...ctx.deadIds.map((id) => prisma.villager.delete({ where: { id } })),
     // Update surviving villagers (age, lifeStage, needs, emotions)
@@ -171,7 +200,7 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
     ...ctx.emittedEvents.map((e) => prisma.eventRecord.create({ data: e })),
   ]);
 
-  // 8. Return the updated view
+  // 10. Return the updated view
   const { getGame } = await import('@/lib/server/gameService');
   return getGame(villageId);
 }

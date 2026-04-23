@@ -30,11 +30,12 @@ model Village {
 }
 
 model ResourceState {
-  id           String @id @default(uuid())
-  villageId    String @unique
-  food         Float
-  weatherHarsh Float
-  diseaseRisk  Float
+  id                    String @id @default(uuid())
+  villageId             String @unique
+  food                  Float
+  weatherHarsh          Float
+  diseaseRisk           Float
+  blessingDaysRemaining Int    @default(0)
 
   village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
 }

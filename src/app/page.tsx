@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 // ---------------------------------------------------------------------------
 // Types (client-safe duplicates of server types)
@@ -51,7 +51,7 @@ type GamePayload = {
   year: number;
   season: string;
   population: number;
-  resources: { food: number; weatherHarsh: number; diseaseRisk: number };
+  resources: { food: number; weatherHarsh: number; diseaseRisk: number; blessingDaysRemaining: number };
   culture: CultureState | null;
   households: HouseholdSummary[];
   villagers: VillagerPayload[];
@@ -75,6 +75,9 @@ const EVENT_ICONS: Record<string, string> = {
   spirit_intervention: '✦',
   household_grief: '~',
   season_change: '◑',
+  culture_shift: '◈',
+  villager_incident: '◆',
+  relationship_shift: '↔',
 };
 
 function eventIcon(type: string): string {
@@ -107,11 +110,41 @@ export default function HomePage() {
   const [detailCache, setDetailCache] = useState<Record<string, VillagerDetailPayload>>({});
   const [detailLoading, setDetailLoading] = useState(false);
 
-  const [spiritAction, setSpiritAction] = useState<'cause_famine' | 'send_dream'>('cause_famine');
+  const [spiritAction, setSpiritAction] = useState<'cause_famine' | 'send_dream' | 'bless_harvest'>('cause_famine');
   const [famineSeverity, setFamineSeverity] = useState<'mild' | 'severe'>('mild');
   const [dreamTargetId, setDreamTargetId] = useState<string>('');
   const [dreamIntent, setDreamIntent] = useState<'hope' | 'warning' | 'revelation' | 'fear'>('hope');
   const [spiritResult, setSpiritResult] = useState<string | null>(null);
+
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playSpeed, setPlaySpeed] = useState<1 | 3 | 10>(1);
+  const isAutoTicking = useRef(false);
+
+  // Auto-tick effect
+  useEffect(() => {
+    if (!isPlaying || !game) return;
+    const interval = setInterval(async () => {
+      if (isAutoTicking.current) return;
+      isAutoTicking.current = true;
+      try {
+        let latest: GamePayload = game;
+        for (let i = 0; i < playSpeed; i++) {
+          const res = await fetch(`/api/game/${game.id}/tick`, { method: 'POST' });
+          if (!res.ok) { setIsPlaying(false); setError('Tick failed during play'); return; }
+          latest = await res.json() as GamePayload;
+          if (latest.villagers.length === 0) { setIsPlaying(false); break; }
+        }
+        setGame(latest);
+      } catch {
+        setIsPlaying(false);
+      } finally {
+        isAutoTicking.current = false;
+      }
+    }, 800);
+    return () => clearInterval(interval);
+  // game.id is stable; re-run when isPlaying, playSpeed, or game.id changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, playSpeed, game?.id]);
 
   // --- API helpers ---
 
@@ -200,6 +233,28 @@ export default function HomePage() {
     }
   }
 
+  async function blessHarvest() {
+    if (!game) return;
+    setLoading(true);
+    setError(null);
+    setSpiritResult(null);
+    try {
+      const res = await fetch(`/api/game/${game.id}/spirit-action`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'bless_harvest' }),
+      });
+      if (!res.ok) throw new Error('Spirit action failed');
+      const updated = await fetchGame(game.id);
+      setGame(updated);
+      setSpiritResult('Your blessing enriches the soil. Production will be 50% greater for 7 days.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function sendDream() {
     if (!game || !dreamTargetId) return;
     setLoading(true);
@@ -261,10 +316,27 @@ export default function HomePage() {
       <h1>Spiritvale</h1>
 
       <div className="controls">
-        <button onClick={createGame} disabled={loading}>Create village</button>
-        <button onClick={tick} disabled={loading || !game}>Tick 1 day</button>
-        <button onClick={() => tickMany(7)} disabled={loading || !game}>Tick 7 days</button>
-        <button onClick={() => tickMany(30)} disabled={loading || !game}>Tick 30 days</button>
+        <button onClick={createGame} disabled={loading || isPlaying}>Create village</button>
+        <button
+          onClick={() => setIsPlaying((p) => !p)}
+          disabled={!game}
+          className={isPlaying ? 'btn-pause' : 'btn-play'}
+        >
+          {isPlaying ? '⏸ Pause' : '▶ Play'}
+        </button>
+        <select
+          value={playSpeed}
+          onChange={(e) => setPlaySpeed(Number(e.target.value) as 1 | 3 | 10)}
+          disabled={!game || isPlaying}
+          className="speed-select"
+        >
+          <option value={1}>1×</option>
+          <option value={3}>3×</option>
+          <option value={10}>10×</option>
+        </select>
+        <button onClick={tick} disabled={loading || isPlaying || !game}>Tick 1 day</button>
+        <button onClick={() => tickMany(7)} disabled={loading || isPlaying || !game}>Tick 7 days</button>
+        <button onClick={() => tickMany(30)} disabled={loading || isPlaying || !game}>Tick 30 days</button>
       </div>
 
       {error ? <p role="alert" className="error">Error: {error}</p> : null}
@@ -285,6 +357,9 @@ export default function HomePage() {
               }
               return null;
             })()}
+            {game.resources.blessingDaysRemaining > 0 ? (
+              <span className="blessing-indicator"> · ✦ Blessed: {game.resources.blessingDaysRemaining}d</span>
+            ) : null}
             &nbsp;|&nbsp; Households: {game.households.length}
           </p>
 
@@ -302,8 +377,22 @@ export default function HomePage() {
                 className={`tab-btn${spiritAction === 'send_dream' ? ' active' : ''}`}
                 disabled={loading}
               >Send Dream</button>
+              <button
+                onClick={() => setSpiritAction('bless_harvest')}
+                className={`tab-btn${spiritAction === 'bless_harvest' ? ' active' : ''}`}
+                disabled={loading}
+              >Bless Harvest</button>
             </div>
-            {spiritAction === 'cause_famine' ? (
+            {spiritAction === 'bless_harvest' ? (
+              <div className="spirit-controls">
+                <button onClick={blessHarvest} disabled={loading || game.resources.blessingDaysRemaining > 0} className="btn-spirit">
+                  ✦ Bless Harvest
+                </button>
+                {game.resources.blessingDaysRemaining > 0 && (
+                  <span className="blessing-active">Blessing active: {game.resources.blessingDaysRemaining} days remaining</span>
+                )}
+              </div>
+            ) : spiritAction === 'cause_famine' ? (
               <div className="spirit-controls">
                 <label htmlFor="severity-select">Severity: </label>
                 <select

@@ -57,4 +57,10 @@ describe('computeFoodProduction', () => {
   it('FOOD_CAP is 800', () => {
     expect(FOOD_CAP).toBe(800);
   });
+
+  it('blessingMultiplier = 1.5 produces 50% more than blessingMultiplier = 1.0', () => {
+    const base    = computeFoodProduction(4, 2, 1, 'spring', 1.0, 1.0);
+    const blessed = computeFoodProduction(4, 2, 1, 'spring', 1.0, 1.5);
+    expect(blessed).toBeCloseTo(base * 1.5, 5);
+  });
 });
