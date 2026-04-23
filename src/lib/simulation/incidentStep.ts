@@ -69,13 +69,15 @@ function resolveIncident(
 
   switch (motive.type) {
     case 'status': {
-      // Challenge a random other adult
+      // Challenge a random other adult; trust penalty scales with punishmentSeverity
       const others = living.filter((v) => v.id !== actor.id && v.lifeStage === 'adult');
       if (others.length === 0) break;
       const target = others[Math.floor(rng() * others.length)]!;
       emitIncident(`${actor.name} presses hard for standing among the group.`, target.id, target.name);
-      nudgeRelationship(ctx, actor.id, target.id, 0, -0.03, ctx.day);
-      nudgeRelationship(ctx, target.id, actor.id, 0, -0.02, ctx.day);
+      const punishScale = ctx.cultureState?.punishmentSeverity ?? 0.4;
+      const trustPenalty = -(0.02 + punishScale * 0.04);
+      nudgeRelationship(ctx, actor.id, target.id, 0, trustPenalty, ctx.day);
+      nudgeRelationship(ctx, target.id, actor.id, 0, trustPenalty * 0.7, ctx.day);
       break;
     }
     case 'kin_protection': {
@@ -157,7 +159,18 @@ export function stepResolveMotiveIncidents(ctx: TickContext): void {
 
     // Per-villager deterministic RNG for this tick
     const rng = createSeededRng(`${ctx.seed}:incident:${ctx.day}:${villager.id}`);
-    if (rng() >= topMotive.urgency * 0.07) continue;
+
+    // Culture norms raise the probability cap for certain motives
+    const baseProb = topMotive.urgency * 0.07;
+    let probCap: number;
+    if (topMotive.type === 'status') {
+      probCap = Math.min(0.15, baseProb * (1 + (ctx.cultureState?.punishmentSeverity ?? 0.4) * 0.5));
+    } else if (topMotive.type === 'kin_protection') {
+      probCap = Math.min(0.15, baseProb * (1 + (ctx.cultureState?.kinLoyaltyNorm ?? 0.8) * 0.5));
+    } else {
+      probCap = baseProb;
+    }
+    if (rng() >= probCap) continue;
 
     resolveIncident(ctx, villager, topMotive, rng);
   }

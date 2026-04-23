@@ -104,6 +104,8 @@ export interface VillageView {
     weatherHarsh: number;
     diseaseRisk: number;
     blessingDaysRemaining: number;
+    stormDaysRemaining: number;
+    healthBlessingDaysRemaining: number;
   };
   culture: CultureState | null;
   households: HouseholdSummary[];
@@ -117,10 +119,15 @@ export interface VillageView {
   }>;
 }
 
+export type PlantIdeaMotiveType = 'tradition' | 'reform' | 'belonging' | 'survival' | 'kin_protection';
+
 export type SpiritActionInput =
   | { type: 'cause_famine'; severity: FamineSeverity }
   | { type: 'send_dream'; targetVillagerId: string; intent: 'hope' | 'warning' | 'revelation' | 'fear' }
-  | { type: 'bless_harvest' };
+  | { type: 'bless_harvest' }
+  | { type: 'bless_health'; targetVillagerId?: string }
+  | { type: 'cause_storm' }
+  | { type: 'plant_idea'; targetVillagerId: string; motiveType: PlantIdeaMotiveType };
 
 export interface SpiritActionResult {
   success: boolean;
