@@ -2,6 +2,13 @@
 
 import { useState } from 'react';
 
+// ---------------------------------------------------------------------------
+// Types (client-safe duplicates of server types)
+// ---------------------------------------------------------------------------
+
+type VillagerNeeds = { hunger: number; safety: number; belonging: number; status: number };
+type VillagerEmotions = { fear: number; grief: number; hope: number; anger: number };
+
 type VillagerPayload = {
   id: string;
   name: string;
@@ -10,7 +17,18 @@ type VillagerPayload = {
   lifeStage: string;
   role: string;
   traits: string[];
+  householdId: string | null;
+  householdName: string | null;
+  needs: VillagerNeeds;
+  emotions: VillagerEmotions;
 };
+
+type VillagerDetailPayload = VillagerPayload & {
+  kinship: Array<{ id: string; toVillagerId: string; toVillagerName: string; kind: string; certainty: number }>;
+  relationships: Array<{ id: string; toVillagerId: string; toVillagerName: string; type: string; strength: number; trust: number }>;
+};
+
+type HouseholdSummary = { id: string; name: string; memberIds: string[] };
 
 type GamePayload = {
   id: string;
@@ -20,31 +38,85 @@ type GamePayload = {
   season: string;
   population: number;
   resources: { food: number; weatherHarsh: number; diseaseRisk: number };
+  households: HouseholdSummary[];
   villagers: VillagerPayload[];
   events: Array<{ id: string; day: number; type: string; title: string; facts: Record<string, unknown> }>;
 };
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function ageDisplay(ageInDays: number): string {
-  const years = Math.floor(ageInDays / 360);
-  return `${years}y`;
+  return `${Math.floor(ageInDays / 360)}y`;
 }
+
+const EVENT_ICONS: Record<string, string> = {
+  world_created: '★',
+  daily_tick: '·',
+  villager_death: '†',
+  villager_birth: '◎',
+  resource_shortage: '⚠',
+  spirit_intervention: '✦',
+  household_grief: '~',
+  season_change: '◑',
+};
+
+function eventIcon(type: string): string {
+  return EVENT_ICONS[type] ?? '•';
+}
+
+function Bar({ label, value }: { label: string; value: number }) {
+  const pct = Math.round(value * 100);
+  return (
+    <div className="bar-row">
+      <span className="bar-label">{label}</span>
+      <div className="bar-track">
+        <div className="bar-fill" style={{ width: `${pct}%` }} />
+      </div>
+      <span className="bar-pct">{pct}%</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 
 export default function HomePage() {
   const [game, setGame] = useState<GamePayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [selectedVillagerId, setSelectedVillagerId] = useState<string | null>(null);
+  const [detailCache, setDetailCache] = useState<Record<string, VillagerDetailPayload>>({});
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const [famineSeverity, setFamineSeverity] = useState<'mild' | 'severe'>('mild');
+  const [spiritResult, setSpiritResult] = useState<string | null>(null);
+
+  // --- API helpers ---
+
+  async function fetchGame(id: string) {
+    const res = await fetch(`/api/game/${id}`);
+    if (!res.ok) throw new Error('Failed to fetch game state');
+    return res.json() as Promise<GamePayload>;
+  }
+
   async function createGame() {
     setLoading(true);
     setError(null);
+    setSpiritResult(null);
+    setSelectedVillagerId(null);
+    setDetailCache({});
     try {
-      const response = await fetch('/api/game/new', {
+      const res = await fetch('/api/game/new', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: 'Spiritvale Local' }),
+        body: JSON.stringify({ name: 'Spiritvale' }),
       });
-      if (!response.ok) throw new Error('Failed to create game');
-      setGame((await response.json()) as GamePayload);
+      if (!res.ok) throw new Error('Failed to create game');
+      setGame((await res.json()) as GamePayload);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -52,41 +124,146 @@ export default function HomePage() {
     }
   }
 
+  async function tickOnce(): Promise<GamePayload> {
+    if (!game) throw new Error('No game loaded');
+    const res = await fetch(`/api/game/${game.id}/tick`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to tick game');
+    return res.json() as Promise<GamePayload>;
+  }
+
   async function tick() {
-    if (!game) return;
     setLoading(true);
     setError(null);
+    setSpiritResult(null);
     try {
-      const response = await fetch(`/api/game/${game.id}/tick`, { method: 'POST' });
-      if (!response.ok) throw new Error('Failed to tick game');
-      setGame((await response.json()) as GamePayload);
+      setGame(await tickOnce());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
   }
+
+  async function tickMany(n: number) {
+    if (!game) return;
+    setLoading(true);
+    setError(null);
+    setSpiritResult(null);
+    try {
+      let latest: GamePayload = game;
+      for (let i = 0; i < n; i++) {
+        latest = await tickOnce();
+      }
+      setGame(latest);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function selectVillager(v: VillagerPayload) {
+    if (selectedVillagerId === v.id) {
+      setSelectedVillagerId(null);
+      return;
+    }
+    setSelectedVillagerId(v.id);
+    if (detailCache[v.id]) return;
+    setDetailLoading(true);
+    try {
+      const res = await fetch(`/api/game/${game!.id}/villagers/${v.id}`);
+      if (!res.ok) throw new Error('Failed to load villager detail');
+      const detail = (await res.json()) as VillagerDetailPayload;
+      setDetailCache((c) => ({ ...c, [v.id]: detail }));
+    } catch {
+      // silently degrade — base info still shown
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function causeFamine() {
+    if (!game) return;
+    setLoading(true);
+    setError(null);
+    setSpiritResult(null);
+    try {
+      const res = await fetch(`/api/game/${game.id}/spirit-action`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'cause_famine', severity: famineSeverity }),
+      });
+      if (!res.ok) throw new Error('Spirit action failed');
+      const result = (await res.json()) as { foodAfter: number; affectedVillagerCount: number };
+      const updated = await fetchGame(game.id);
+      setGame(updated);
+      setSpiritResult(
+        `Famine struck. Food reduced to ${result.foodAfter}. ${result.affectedVillagerCount} villagers gripped by fear.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
+  const selectedDetail = selectedVillagerId ? detailCache[selectedVillagerId] : null;
 
   return (
     <main>
       <h1>Spiritvale</h1>
 
-      <button onClick={createGame} disabled={loading}>Create village</button>
-      <button onClick={tick} disabled={loading || !game}>Tick one day</button>
+      <div className="controls">
+        <button onClick={createGame} disabled={loading}>Create village</button>
+        <button onClick={tick} disabled={loading || !game}>Tick 1 day</button>
+        <button onClick={() => tickMany(7)} disabled={loading || !game}>Tick 7 days</button>
+        <button onClick={() => tickMany(30)} disabled={loading || !game}>Tick 30 days</button>
+      </div>
 
-      {error ? <p role="alert">Error: {error}</p> : null}
+      {error ? <p role="alert" className="error">Error: {error}</p> : null}
 
       {game ? (
         <div className="card">
           <h2>{game.name}</h2>
-          <p>Day {game.day} · Year {game.year} · {game.season}</p>
-          <p>Population: {game.population} &nbsp;|&nbsp; Food: {Math.round(game.resources.food)}</p>
+          <p className="village-meta">
+            Day {game.day} · Year {game.year} · {game.season}
+            &nbsp;|&nbsp; Population: {game.population}
+            &nbsp;|&nbsp; Food: {Math.round(game.resources.food)}
+            &nbsp;|&nbsp; Households: {game.households.length}
+          </p>
 
+          {/* Spirit Action Panel */}
+          <section className="spirit-panel">
+            <h3>Spirit Actions</h3>
+            <div className="spirit-controls">
+              <label htmlFor="severity-select">Severity: </label>
+              <select
+                id="severity-select"
+                value={famineSeverity}
+                onChange={(e) => setFamineSeverity(e.target.value as 'mild' | 'severe')}
+                disabled={loading}
+              >
+                <option value="mild">Mild</option>
+                <option value="severe">Severe</option>
+              </select>
+              <button onClick={causeFamine} disabled={loading} className="btn-spirit">
+                ✦ Cause Famine
+              </button>
+            </div>
+            {spiritResult ? <p className="spirit-result">{spiritResult}</p> : null}
+          </section>
+
+          {/* Villager Table */}
           <h3>Villagers ({game.villagers.length})</h3>
           <table>
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Household</th>
                 <th>Sex</th>
                 <th>Age</th>
                 <th>Stage</th>
@@ -96,8 +273,13 @@ export default function HomePage() {
             </thead>
             <tbody>
               {game.villagers.map((v) => (
-                <tr key={v.id}>
+                <tr
+                  key={v.id}
+                  onClick={() => selectVillager(v)}
+                  className={`villager-row${selectedVillagerId === v.id ? ' selected' : ''}`}
+                >
                   <td>{v.name}</td>
+                  <td>{v.householdName ?? '—'}</td>
                   <td>{v.sex[0]?.toUpperCase()}</td>
                   <td>{ageDisplay(v.ageInDays)}</td>
                   <td>{v.lifeStage}</td>
@@ -108,8 +290,97 @@ export default function HomePage() {
             </tbody>
           </table>
 
+          {/* Villager Detail Panel */}
+          {selectedVillagerId ? (
+            <div className="villager-detail card">
+              {detailLoading ? (
+                <p>Loading…</p>
+              ) : selectedDetail ? (
+                <>
+                  <h4>{selectedDetail.name} <span className="detail-meta">· {selectedDetail.lifeStage} · {selectedDetail.role} · {selectedDetail.householdName ?? 'no household'}</span></h4>
+
+                  <div className="detail-columns">
+                    <div>
+                      <p className="detail-section-label">Needs</p>
+                      <Bar label="Hunger" value={selectedDetail.needs.hunger} />
+                      <Bar label="Safety" value={selectedDetail.needs.safety} />
+                      <Bar label="Belonging" value={selectedDetail.needs.belonging} />
+                      <Bar label="Status" value={selectedDetail.needs.status} />
+                    </div>
+                    <div>
+                      <p className="detail-section-label">Emotions</p>
+                      <Bar label="Fear" value={selectedDetail.emotions.fear} />
+                      <Bar label="Grief" value={selectedDetail.emotions.grief} />
+                      <Bar label="Hope" value={selectedDetail.emotions.hope} />
+                      <Bar label="Anger" value={selectedDetail.emotions.anger} />
+                    </div>
+                  </div>
+
+                  {selectedDetail.kinship.length > 0 && (
+                    <div className="detail-section">
+                      <p className="detail-section-label">Kinship</p>
+                      <ul className="kin-list">
+                        {selectedDetail.kinship.map((k) => (
+                          <li key={k.id}>{k.toVillagerName} <span className="kin-kind">({k.kind.replace(/_/g, ' ')})</span></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {selectedDetail.relationships.length > 0 && (
+                    <div className="detail-section">
+                      <p className="detail-section-label">Relationships</p>
+                      <ul className="rel-list">
+                        {selectedDetail.relationships.map((r) => (
+                          <li key={r.id}>
+                            {r.toVillagerName} · <span className="rel-type">{r.type}</span> · strength {Math.round(r.strength * 100)}% · trust {Math.round(r.trust * 100)}%
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              ) : (
+                // Fallback: show base info without kinship/relationships
+                (() => {
+                  const v = game.villagers.find((vv) => vv.id === selectedVillagerId)!;
+                  return (
+                    <>
+                      <h4>{v.name}</h4>
+                      <div className="detail-columns">
+                        <div>
+                          <p className="detail-section-label">Needs</p>
+                          <Bar label="Hunger" value={v.needs.hunger} />
+                          <Bar label="Safety" value={v.needs.safety} />
+                          <Bar label="Belonging" value={v.needs.belonging} />
+                          <Bar label="Status" value={v.needs.status} />
+                        </div>
+                        <div>
+                          <p className="detail-section-label">Emotions</p>
+                          <Bar label="Fear" value={v.emotions.fear} />
+                          <Bar label="Grief" value={v.emotions.grief} />
+                          <Bar label="Hope" value={v.emotions.hope} />
+                          <Bar label="Anger" value={v.emotions.anger} />
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()
+              )}
+            </div>
+          ) : null}
+
+          {/* Event List */}
           <h3>Recent events</h3>
-          <pre>{JSON.stringify(game.events.slice(-8), null, 2)}</pre>
+          <ul className="event-list">
+            {game.events.slice(-12).map((evt) => (
+              <li key={evt.id} className={`event event-${evt.type}`}>
+                <span className="event-day">Day {evt.day}</span>
+                <span className="event-icon">{eventIcon(evt.type)}</span>
+                <span className="event-title">{evt.title}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : (
         <p>No village loaded.</p>
