@@ -68,9 +68,27 @@ export interface RelationshipEdgeView {
   trust: number;
 }
 
+export interface VillagerMotive {
+  type: string;   // e.g. 'survival', 'status', 'belonging', 'kin_protection', 'romance', 'tradition', 'reform', 'autonomy'
+  label: string;  // human-readable description
+  urgency: number; // 0–1
+}
+
+export interface CultureState {
+  sharingNorm: number;
+  punishmentSeverity: number;
+  outsiderTolerance: number;
+  prestigeByAge: number;
+  prestigeBySkill: number;
+  ritualIntensity: number;
+  spiritualFear: number;
+  kinLoyaltyNorm: number;
+}
+
 export interface VillagerDetailView extends VillagerView {
   kinship: KinshipLinkView[];
   relationships: RelationshipEdgeView[];
+  motives: VillagerMotive[];
 }
 
 export interface VillageView {
@@ -86,6 +104,7 @@ export interface VillageView {
     weatherHarsh: number;
     diseaseRisk: number;
   };
+  culture: CultureState | null;
   households: HouseholdSummary[];
   villagers: VillagerView[];
   events: Array<{
@@ -97,10 +116,9 @@ export interface VillageView {
   }>;
 }
 
-export interface SpiritActionInput {
-  type: 'cause_famine';
-  severity: FamineSeverity;
-}
+export type SpiritActionInput =
+  | { type: 'cause_famine'; severity: FamineSeverity }
+  | { type: 'send_dream'; targetVillagerId: string; intent: 'hope' | 'warning' | 'revelation' | 'fear' };
 
 export interface SpiritActionResult {
   success: boolean;

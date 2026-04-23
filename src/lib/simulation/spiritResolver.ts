@@ -5,6 +5,95 @@ import { clamp } from './worldGenerator';
 import type { FamineSeverity, SpiritActionInput, SpiritActionResult, VillagerEmotions } from '@/lib/domain/types';
 
 // ---------------------------------------------------------------------------
+// Send Dream
+// ---------------------------------------------------------------------------
+
+export type DreamIntent = 'hope' | 'warning' | 'revelation' | 'fear';
+
+export interface SendDreamEffect {
+  emotionChanges: Partial<VillagerEmotions>;
+}
+
+export function computeSendDreamEffect(
+  emotions: VillagerEmotions,
+  intent: DreamIntent
+): SendDreamEffect {
+  let changes: Partial<VillagerEmotions>;
+  switch (intent) {
+    case 'hope':
+      changes = {
+        hope:  clamp(emotions.hope  + 0.25, 0, 1) - emotions.hope,
+        fear:  clamp(emotions.fear  - 0.10, 0, 1) - emotions.fear,
+        grief: clamp(emotions.grief - 0.05, 0, 1) - emotions.grief,
+      };
+      break;
+    case 'warning':
+      changes = {
+        fear: clamp(emotions.fear + 0.20, 0, 1) - emotions.fear,
+        hope: clamp(emotions.hope - 0.10, 0, 1) - emotions.hope,
+      };
+      break;
+    case 'revelation':
+      changes = {
+        hope: clamp(emotions.hope + 0.10, 0, 1) - emotions.hope,
+        fear: clamp(emotions.fear - 0.05, 0, 1) - emotions.fear,
+      };
+      break;
+    case 'fear':
+      changes = {
+        fear:  clamp(emotions.fear  + 0.30, 0, 1) - emotions.fear,
+        anger: clamp(emotions.anger + 0.10, 0, 1) - emotions.anger,
+      };
+      break;
+  }
+  return { emotionChanges: changes };
+}
+
+export async function resolveSendDream(
+  villageId: string,
+  targetVillagerId: string,
+  intent: DreamIntent,
+  currentDay: number
+): Promise<SpiritActionResult> {
+  const villager = await prisma.villager.findFirst({ where: { id: targetVillagerId, villageId } });
+  if (!villager) throw new Error(`Villager ${targetVillagerId} not found in village ${villageId}`);
+
+  const emotions = (villager.emotions as unknown as VillagerEmotions) ?? { fear: 0.1, grief: 0, hope: 0.5, anger: 0 };
+  const { emotionChanges } = computeSendDreamEffect(emotions, intent);
+
+  const updatedEmotions: VillagerEmotions = {
+    fear:  clamp(emotions.fear  + (emotionChanges.fear  ?? 0), 0, 1),
+    grief: clamp(emotions.grief + (emotionChanges.grief ?? 0), 0, 1),
+    hope:  clamp(emotions.hope  + (emotionChanges.hope  ?? 0), 0, 1),
+    anger: clamp(emotions.anger + (emotionChanges.anger ?? 0), 0, 1),
+  };
+
+  const dreamTitles: Record<DreamIntent, string> = {
+    hope:       `${villager.name} wakes with unexpected warmth in their heart.`,
+    warning:    `${villager.name} wakes trembling from a dark vision.`,
+    revelation: `${villager.name} is shaken by a dream of unseen purpose.`,
+    fear:       `${villager.name} screams in the night, gripped by terrible visions.`,
+  };
+
+  const eventId = randomUUID();
+  await prisma.$transaction([
+    prisma.villager.update({ where: { id: targetVillagerId }, data: { emotions: updatedEmotions as object } }),
+    prisma.eventRecord.create({
+      data: {
+        id: eventId,
+        villageId,
+        day: currentDay,
+        type: 'spirit_intervention',
+        title: dreamTitles[intent],
+        facts: { spiritAction: 'send_dream', targetVillagerId, intent, emotionChanges },
+      },
+    }),
+  ]);
+
+  return { success: true, eventId, foodAfter: 0, affectedVillagerCount: 1 };
+}
+
+// ---------------------------------------------------------------------------
 // Pure computation (testable without DB)
 // ---------------------------------------------------------------------------
 
@@ -41,6 +130,10 @@ export async function resolveSpiritAction(
   input: SpiritActionInput,
   currentDay: number
 ): Promise<SpiritActionResult> {
+  if (input.type === 'send_dream') {
+    return resolveSendDream(villageId, input.targetVillagerId, input.intent, currentDay);
+  }
+
   const resources = await prisma.resourceState.findUnique({ where: { villageId } });
   if (!resources) throw new Error(`Village ${villageId} not found`);
 

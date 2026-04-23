@@ -67,7 +67,11 @@ button:disabled { opacity: 0.45; cursor: default; }
   margin-bottom: 16px;
 }
 .spirit-panel h3 { margin: 0 0 10px; color: #c9a6ff; }
-.spirit-controls { display: flex; align-items: center; gap: 10px; }
+.spirit-action-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.tab-btn { background: #231c35; border-color: #4b3575; color: #9a8ab8; font-size: 13px; padding: 5px 12px; }
+.tab-btn.active { background: #2e2050; border-color: #7a55c0; color: #c9a6ff; }
+.tab-btn:hover:not(:disabled):not(.active) { background: #2a1f45; }
+.spirit-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .spirit-controls label { font-size: 14px; color: #9a8ab8; }
 .spirit-controls select {
   background: #231c35;
@@ -82,6 +86,43 @@ button:disabled { opacity: 0.45; cursor: default; }
   color: #e2c96a;
   font-style: italic;
 }
+
+/* Culture panel */
+.culture-panel {
+  background: #131e1a;
+  border: 1px solid #2a4a3a;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+.culture-panel h3 { margin: 0 0 10px; color: #7ecfb0; }
+.culture-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; }
+
+/* Motive list */
+.motive-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+.motive-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 0;
+  gap: 8px;
+}
+.motive-label { color: #c4cde0; flex: 1; }
+.motive-urgency {
+  font-size: 11px;
+  font-variant: small-caps;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.urgency-high { background: #3d1a1a; color: #f87a7a; }
+.urgency-mid  { background: #2a2a1a; color: #d4b860; }
+.urgency-low  { background: #1a1f2a; color: #6b7691; }
 
 /* Villager table */
 table {

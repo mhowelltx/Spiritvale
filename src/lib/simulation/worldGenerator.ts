@@ -10,6 +10,7 @@ import type {
   Sex,
   VillagerNeeds,
   VillagerEmotions,
+  VillagerMotive,
   VillageView,
   HouseholdSummary,
 } from '@/lib/domain/types';
@@ -30,6 +31,71 @@ const HOUSEHOLD_NAMES = [
   'House of the Thorn', 'Kin of the Bear', 'Hearth of the Flint',
   'Clan of the Marsh',
 ];
+
+// ---------------------------------------------------------------------------
+// Motive generation
+// ---------------------------------------------------------------------------
+
+// Map traits to motive archetypes
+const TRAIT_TO_MOTIVE: Record<string, { type: string; label: string }> = {
+  brave:    { type: 'autonomy',        label: 'Act on own judgment, prove worth' },
+  fierce:   { type: 'status',          label: 'Rise above others in the group' },
+  proud:    { type: 'status',          label: 'Earn recognition from the village' },
+  cautious: { type: 'survival',        label: 'Keep the family fed through the season' },
+  stubborn: { type: 'tradition',       label: 'Preserve the ways of the ancestors' },
+  curious:  { type: 'reform',          label: 'Find a better way of doing things' },
+  loyal:    { type: 'kin_protection',  label: 'Keep family safe above all' },
+  gentle:   { type: 'belonging',       label: 'Strengthen bonds with kin and friends' },
+  generous: { type: 'belonging',       label: 'Be someone others can rely on' },
+  wise:     { type: 'tradition',       label: 'Pass knowledge to the next generation' },
+};
+
+export function generateMotives(
+  lifeStage: LifeStage,
+  role: Role,
+  traits: string[],
+  partnerName: string | null,
+  rng: () => number
+): VillagerMotive[] {
+  if (lifeStage === 'child') return [];
+
+  const motives: VillagerMotive[] = [];
+
+  if (lifeStage === 'elder') {
+    const m = rng() < 0.6
+      ? { type: 'tradition', label: 'Preserve the old ways for those who come after' }
+      : { type: 'belonging', label: 'Keep the family close before the end' };
+    motives.push({ ...m, urgency: clamp(0.6 + rng() * 0.2, 0, 1) });
+    return motives;
+  }
+
+  // Adults: trait-driven primary motive
+  for (const trait of traits) {
+    const def = TRAIT_TO_MOTIVE[trait];
+    if (def) {
+      motives.push({ type: def.type, label: def.label, urgency: clamp(0.5 + rng() * 0.4, 0, 1) });
+      break;
+    }
+  }
+
+  // Pair bond motive
+  if (partnerName && rng() < 0.7) {
+    motives.push({
+      type: 'romance',
+      label: `Deepen the bond with ${partnerName}`,
+      urgency: clamp(0.4 + rng() * 0.3, 0, 1),
+    });
+  }
+
+  // Survival motive if no primary yet or hunter/gatherer
+  if (motives.length === 0 || (role === 'hunter' || role === 'gatherer')) {
+    if (!motives.some((m) => m.type === 'survival')) {
+      motives.push({ type: 'survival', label: 'Keep the family fed through the season', urgency: clamp(0.5 + rng() * 0.3, 0, 1) });
+    }
+  }
+
+  return motives.slice(0, 2);
+}
 
 // ---------------------------------------------------------------------------
 // Pure helpers (shared with gameService and tests)
@@ -99,6 +165,7 @@ export interface ComputedVillager {
   traits: string[];
   needs: VillagerNeeds;
   emotions: VillagerEmotions;
+  motives: VillagerMotive[];
   householdIndex: number; // index into computed households array
 }
 
@@ -197,7 +264,14 @@ export function computeVillageStructure(seed: string, population: number): Compu
     householdAssignment.set(elder.tempId, smallest);
   });
 
-  // --- Attach household index to each villager, compute needs/emotions ---
+  // Build partner lookup: tempId → partner name (for motive generation)
+  const partnerNameByTempId = new Map<string, string>();
+  for (let i = 0; i < pairCount; i++) {
+    partnerNameByTempId.set(adultMales[i]!.tempId, adultFemales[i]!.name);
+    partnerNameByTempId.set(adultFemales[i]!.tempId, adultMales[i]!.name);
+  }
+
+  // --- Attach household index to each villager, compute needs/emotions/motives ---
   const villagers: ComputedVillager[] = rawVillagers.map((v) => {
     const hIdx = householdAssignment.get(v.tempId) ?? 0;
 
@@ -215,7 +289,15 @@ export function computeVillageStructure(seed: string, population: number): Compu
       anger: clamp(rng() * 0.1, 0, 1),
     };
 
-    return { ...v, householdIndex: hIdx, needs, emotions };
+    const motives = generateMotives(
+      v.lifeStage,
+      v.role,
+      v.traits,
+      partnerNameByTempId.get(v.tempId) ?? null,
+      rng
+    );
+
+    return { ...v, householdIndex: hIdx, needs, emotions, motives };
   });
 
   // --- Generate kinship links ---
@@ -371,7 +453,22 @@ export async function generateVillage(input: CreateGameInput): Promise<VillageVi
       householdIdMap.set(h.tempId, row.id);
     }
 
-    // 3. Create villagers with household references, capture real IDs
+    // 3. Create culture state
+    await tx.cultureState.create({
+      data: {
+        villageId: village.id,
+        sharingNorm:        clamp(0.5 + rng() * 0.3, 0, 1),
+        punishmentSeverity: clamp(0.3 + rng() * 0.3, 0, 1),
+        outsiderTolerance:  clamp(0.2 + rng() * 0.3, 0, 1),
+        prestigeByAge:      clamp(0.6 + rng() * 0.2, 0, 1),
+        prestigeBySkill:    clamp(0.4 + rng() * 0.3, 0, 1),
+        ritualIntensity:    clamp(0.2 + rng() * 0.4, 0, 1),
+        spiritualFear:      clamp(0.3 + rng() * 0.4, 0, 1),
+        kinLoyaltyNorm:     clamp(0.7 + rng() * 0.2, 0, 1),
+      },
+    });
+
+    // 4. Create villagers with household references, capture real IDs
     const villagerIdMap = new Map<string, string>(); // tempId → real DB id
     for (const v of structure.villagers) {
       const row = await tx.villager.create({
@@ -386,6 +483,7 @@ export async function generateVillage(input: CreateGameInput): Promise<VillageVi
           traits: v.traits,
           needs: v.needs as object,
           emotions: v.emotions as object,
+          motives: v.motives as object[],
         },
       });
       villagerIdMap.set(v.tempId, row.id);
