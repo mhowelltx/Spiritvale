@@ -59,6 +59,10 @@ export interface TickContext {
   dailyConsumption: number;
   starving: boolean;
   blessingDaysRemaining: number;
+  weatherHarsh: number;
+  diseaseRisk: number;
+  stormDaysRemaining: number;
+  healthBlessingDaysRemaining: number;
   // villagers (mutable during tick)
   villagers: MutableVillager[];
   // kinship: villagerId → ids of household members (from preloaded kinshipLinks)

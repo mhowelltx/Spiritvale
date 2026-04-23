@@ -13,8 +13,21 @@ export function stepAgeAndLifeStage(ctx: TickContext): void {
     if (ageYears >= 65) deathChance = 0.008 + (ageYears - 65) * 0.012;
     if (ctx.starving) deathChance += 0.03;
 
+    // Disease mortality — cautious trait halves the contribution
+    const isCautious = v.traits.includes('cautious');
+    const diseaseContribution = ctx.diseaseRisk * 0.0005;
+    deathChance += isCautious ? diseaseContribution * 0.5 : diseaseContribution;
+
     if (ctx.rng() < deathChance) {
       ctx.deadIds.push(v.id);
+      let cause: string;
+      if (ctx.starving && ctx.rng() < 0.4) {
+        cause = 'starvation';
+      } else if (ctx.diseaseRisk > 0.5 && ctx.rng() < ctx.diseaseRisk * 0.5) {
+        cause = 'disease';
+      } else {
+        cause = 'old age';
+      }
       ctx.emittedEvents.push({
         villageId: ctx.villageId,
         day: ctx.day,
@@ -23,7 +36,7 @@ export function stepAgeAndLifeStage(ctx: TickContext): void {
         facts: {
           villagerId: v.id,
           name: v.name,
-          cause: ctx.starving && ctx.rng() < 0.5 ? 'starvation' : 'old age',
+          cause,
           ageYears: Math.floor(ageYears),
         },
       });

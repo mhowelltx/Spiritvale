@@ -30,6 +30,10 @@ export function stepUpdateNeedsAndEmotions(ctx: TickContext): void {
     } else {
       n.safety = clamp(n.safety + 0.01, 0, 1);
     }
+    // High disease risk erodes sense of safety
+    if (ctx.diseaseRisk > 0.5) {
+      n.safety = clamp(n.safety - (ctx.diseaseRisk - 0.5) * 0.04, 0, 1);
+    }
 
     // Belonging — decreases if sole survivor in household
     const housemates = ctx.householdMembersById.get(v.id) ?? [];

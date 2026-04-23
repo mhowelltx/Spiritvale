@@ -11,6 +11,13 @@ const bodySchema = z.discriminatedUnion('type', [
     intent: z.enum(['hope', 'warning', 'revelation', 'fear']),
   }),
   z.object({ type: z.literal('bless_harvest') }),
+  z.object({ type: z.literal('bless_health'), targetVillagerId: z.string().uuid().optional() }),
+  z.object({ type: z.literal('cause_storm') }),
+  z.object({
+    type: z.literal('plant_idea'),
+    targetVillagerId: z.string().uuid(),
+    motiveType: z.enum(['tradition', 'reform', 'belonging', 'survival', 'kin_protection']),
+  }),
 ]);
 
 export async function POST(

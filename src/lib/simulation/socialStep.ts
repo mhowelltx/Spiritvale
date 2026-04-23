@@ -12,9 +12,10 @@ export function stepResolveSocialInteractions(ctx: TickContext): void {
 
     let { strength, trust } = edge;
 
-    // Kinship bonds decay toward 0.7 — resilient but not static
+    // Kinship bonds decay toward a floor raised by kin loyalty norm
     if (KIN_TYPES.has(edge.type)) {
-      strength = strength + (0.7 - strength) * 0.001;
+      const kinFloor = 0.7 + (ctx.cultureState?.kinLoyaltyNorm ?? 0.8) * 0.15;
+      strength = strength + (kinFloor - strength) * 0.001;
     }
 
     // Household cohabitation bonus: +0.002/tick, cap at 0.95
@@ -23,10 +24,12 @@ export function stepResolveSocialInteractions(ctx: TickContext): void {
       strength = Math.min(0.95, strength + 0.002);
 
       // Hunger pressure: scarcity creates tension between cohabitants with high fear
+      // High sharing norm buffers this tension
       if (ctx.starving) {
         const fromVillager = ctx.villagers.find((v) => v.id === edge.fromVillagerId);
         if (fromVillager && fromVillager.emotions.fear > 0.5) {
-          trust = clamp(trust - 0.005, 0, 1);
+          const sharingBuffer = (ctx.cultureState?.sharingNorm ?? 0.5) * 0.003;
+          trust = clamp(trust - 0.005 + sharingBuffer, 0, 1);
         }
       }
 

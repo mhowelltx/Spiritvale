@@ -99,6 +99,10 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
     dailyConsumption: 0,
     starving: false,
     blessingDaysRemaining: current.resources.blessingDaysRemaining,
+    weatherHarsh: current.resources.weatherHarsh,
+    diseaseRisk: current.resources.diseaseRisk,
+    stormDaysRemaining: current.resources.stormDaysRemaining,
+    healthBlessingDaysRemaining: current.resources.healthBlessingDaysRemaining,
     villagers: mutableVillagers,
     householdMembersById,
     relationshipEdges: mutableRelationshipEdges,
@@ -135,6 +139,8 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
       foodBefore: ctx.foodBefore,
       foodAfter: ctx.foodAfter,
       blessingDaysRemaining: ctx.blessingDaysRemaining,
+      weatherHarsh: ctx.weatherHarsh,
+      diseaseRisk: ctx.diseaseRisk,
       deaths: deadCount,
       births: birthCount,
     },
@@ -146,7 +152,14 @@ export async function runTick(villageId: string): Promise<VillageView | null> {
   await prisma.$transaction([
     prisma.resourceState.update({
       where: { villageId },
-      data: { food: ctx.foodAfter, blessingDaysRemaining: ctx.blessingDaysRemaining },
+      data: {
+        food: ctx.foodAfter,
+        blessingDaysRemaining: ctx.blessingDaysRemaining,
+        weatherHarsh: ctx.weatherHarsh,
+        diseaseRisk: ctx.diseaseRisk,
+        stormDaysRemaining: ctx.stormDaysRemaining,
+        healthBlessingDaysRemaining: ctx.healthBlessingDaysRemaining,
+      },
     }),
     prisma.village.update({
       where: { id: villageId },
