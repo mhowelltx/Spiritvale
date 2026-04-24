@@ -1,184 +1,176 @@
 import { randomUUID } from 'crypto';
-import { prisma } from '@/lib/server/prisma';
 import { createSeededRng } from '@/lib/rng/seededRng';
 import { generateName } from '@/lib/rng/nameGen';
+import { sampleNormal, clamp } from '@/lib/utils/math';
 import type {
-  CreateGameInput,
+  BigFiveProfile,
+  AgentNeeds,
+  AgentAffect,
+  AgentMotive,
+  AttachmentStyle,
+  PersonalityDistributionConfig,
+  DistributionSpec,
   LifeStage,
-  Role,
-  Season,
   Sex,
-  VillagerNeeds,
-  VillagerEmotions,
-  VillagerMotive,
-  VillageView,
-  HouseholdSummary,
+  HofstedeCulture,
+  GroupConfig,
+  ExperimentConfig,
+  DEFAULT_HOFSTEDE_CULTURE,
 } from '@/lib/domain/types';
+import { DEFAULT_PERSONALITY_DISTRIBUTION, DEFAULT_HOFSTEDE_CULTURE as DEFAULT_CULTURE } from '@/lib/domain/types';
 
 // ---------------------------------------------------------------------------
-// Constants
+// Personality sampling
 // ---------------------------------------------------------------------------
 
-const SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter'];
-const DAYS_PER_YEAR = 360;
-const DAYS_PER_SEASON = 90;
+function sampleDimension(spec: DistributionSpec, rng: () => number): number {
+  if (spec.kind === 'fixed') return clamp(spec.value, 0, 1);
+  return sampleNormal(spec.mean, spec.stdDev, rng);
+}
 
-const TRAITS = ['brave', 'cautious', 'generous', 'stubborn', 'curious', 'loyal', 'proud', 'gentle', 'fierce', 'wise'];
+export function sampleBigFive(config: PersonalityDistributionConfig, rng: () => number): BigFiveProfile {
+  return {
+    openness:          sampleDimension(config.openness, rng),
+    conscientiousness: sampleDimension(config.conscientiousness, rng),
+    extraversion:      sampleDimension(config.extraversion, rng),
+    agreeableness:     sampleDimension(config.agreeableness, rng),
+    neuroticism:       sampleDimension(config.neuroticism, rng),
+  };
+}
 
-const HOUSEHOLD_NAMES = [
-  'Hearth of the Stone', 'Clan of the Oak', 'House of the River',
-  'Kin of the Wolf', 'Hearth of the Ash', 'Clan of the Raven',
-  'House of the Thorn', 'Kin of the Bear', 'Hearth of the Flint',
-  'Clan of the Marsh',
-];
+export function sampleAttachmentStyle(
+  dist: PersonalityDistributionConfig['attachmentDistribution'],
+  rng: () => number
+): AttachmentStyle {
+  const r = rng();
+  if (r < dist.secure) return 'secure';
+  if (r < dist.secure + dist.anxious) return 'anxious';
+  if (r < dist.secure + dist.anxious + dist.avoidant) return 'avoidant';
+  return 'disorganized';
+}
 
 // ---------------------------------------------------------------------------
-// Motive generation
+// Agent demographics
 // ---------------------------------------------------------------------------
 
-// Map traits to motive archetypes
-const TRAIT_TO_MOTIVE: Record<string, { type: string; label: string }> = {
-  brave:    { type: 'autonomy',        label: 'Act on own judgment, prove worth' },
-  fierce:   { type: 'status',          label: 'Rise above others in the group' },
-  proud:    { type: 'status',          label: 'Earn recognition from the village' },
-  cautious: { type: 'survival',        label: 'Keep the family fed through the season' },
-  stubborn: { type: 'tradition',       label: 'Preserve the ways of the ancestors' },
-  curious:  { type: 'reform',          label: 'Find a better way of doing things' },
-  loyal:    { type: 'kin_protection',  label: 'Keep family safe above all' },
-  gentle:   { type: 'belonging',       label: 'Strengthen bonds with kin and friends' },
-  generous: { type: 'belonging',       label: 'Be someone others can rely on' },
-  wise:     { type: 'tradition',       label: 'Pass knowledge to the next generation' },
-};
+const TICKS_PER_YEAR = 360;
+
+export function resolveLifeStage(ageInTicks: number): LifeStage {
+  const years = ageInTicks / TICKS_PER_YEAR;
+  if (years < 15) return 'child';
+  if (years < 60) return 'adult';
+  return 'elder';
+}
+
+export function buildAgentDemographics(rng: () => number): { sex: Sex; ageInTicks: number; lifeStage: LifeStage } {
+  const sex: Sex = rng() < 0.5 ? 'male' : 'female';
+  let ageInTicks: number;
+  const roll = rng();
+  if (roll < 0.2) {
+    ageInTicks = Math.floor(rng() * 14 * TICKS_PER_YEAR); // child 0–14
+  } else if (roll < 0.85) {
+    ageInTicks = Math.floor((15 + rng() * 44) * TICKS_PER_YEAR); // adult 15–59
+  } else {
+    ageInTicks = Math.floor((60 + rng() * 20) * TICKS_PER_YEAR); // elder 60–80
+  }
+  return { sex, ageInTicks, lifeStage: resolveLifeStage(ageInTicks) };
+}
+
+// ---------------------------------------------------------------------------
+// Initial needs and affect derived from personality
+// ---------------------------------------------------------------------------
+
+export function initialNeeds(personality: BigFiveProfile, lifeStage: LifeStage, rng: () => number): AgentNeeds {
+  // Extraverts start with higher belonging satisfaction; neurotics lower safety
+  return {
+    physiological: clamp(0.8 + rng() * 0.15, 0, 1),
+    safety: clamp(0.65 - personality.neuroticism * 0.2 + rng() * 0.15, 0, 1),
+    belonging: clamp(0.3 + personality.extraversion * 0.4 + rng() * 0.15, 0, 1),
+    esteem: clamp(0.3 + personality.conscientiousness * 0.3 + rng() * 0.15, 0, 1),
+    autonomy: clamp(0.3 + personality.openness * 0.3 + rng() * 0.15, 0, 1),
+  };
+}
+
+export function initialAffect(personality: BigFiveProfile, rng: () => number): AgentAffect {
+  // Costa & McCrae (1980): extraversion → positive affect; neuroticism → negative affect
+  return {
+    positiveAffect: clamp(0.2 + personality.extraversion * 0.5 + rng() * 0.1, 0, 1),
+    negativeAffect: clamp(0.05 + personality.neuroticism * 0.35 + rng() * 0.1, 0, 1),
+    stress: clamp(personality.neuroticism * 0.25 + rng() * 0.1, 0, 1),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Initial motives derived from OCEAN (adult agents)
+// ---------------------------------------------------------------------------
 
 export function generateMotives(
+  personality: BigFiveProfile,
   lifeStage: LifeStage,
-  role: Role,
-  traits: string[],
-  partnerName: string | null,
+  attachmentStyle: AttachmentStyle,
   rng: () => number
-): VillagerMotive[] {
+): AgentMotive[] {
   if (lifeStage === 'child') return [];
 
-  const motives: VillagerMotive[] = [];
+  const motives: AgentMotive[] = [];
 
   if (lifeStage === 'elder') {
-    const m = rng() < 0.6
-      ? { type: 'tradition', label: 'Preserve the old ways for those who come after' }
-      : { type: 'belonging', label: 'Keep the family close before the end' };
-    motives.push({ ...m, urgency: clamp(0.6 + rng() * 0.2, 0, 1) });
+    motives.push({
+      type: 'belonging',
+      label: 'Maintain meaningful connections before declining',
+      urgency: clamp(0.6 + rng() * 0.2, 0, 1),
+    });
     return motives;
   }
 
-  // Adults: trait-driven primary motive
-  for (const trait of traits) {
-    const def = TRAIT_TO_MOTIVE[trait];
-    if (def) {
-      motives.push({ type: def.type, label: def.label, urgency: clamp(0.5 + rng() * 0.4, 0, 1) });
-      break;
-    }
+  // Primary OCEAN-driven motive
+  const o = personality;
+  if (o.openness > 0.65) {
+    motives.push({ type: 'reform', label: 'Explore new approaches and challenge assumptions', urgency: clamp(0.5 + o.openness * 0.3 + rng() * 0.15, 0, 1) });
+  } else if (o.conscientiousness > 0.65) {
+    motives.push({ type: 'status', label: 'Achieve recognition through consistent performance', urgency: clamp(0.5 + o.conscientiousness * 0.3 + rng() * 0.15, 0, 1) });
+  } else if (o.extraversion > 0.65) {
+    motives.push({ type: 'coalition_building', label: 'Build a strong social network within the group', urgency: clamp(0.5 + o.extraversion * 0.3 + rng() * 0.15, 0, 1) });
+  } else if (o.agreeableness > 0.65) {
+    motives.push({ type: 'belonging', label: 'Foster harmony and cooperation with others', urgency: clamp(0.5 + o.agreeableness * 0.3 + rng() * 0.15, 0, 1) });
+  } else {
+    motives.push({ type: 'autonomy', label: 'Maintain independence and self-direction', urgency: clamp(0.45 + rng() * 0.3, 0, 1) });
   }
 
-  // Pair bond motive
-  if (partnerName && rng() < 0.7) {
-    motives.push({
-      type: 'romance',
-      label: `Deepen the bond with ${partnerName}`,
-      urgency: clamp(0.4 + rng() * 0.3, 0, 1),
-    });
-  }
-
-  // Survival motive if no primary yet or hunter/gatherer
-  if (motives.length === 0 || (role === 'hunter' || role === 'gatherer')) {
-    if (!motives.some((m) => m.type === 'survival')) {
-      motives.push({ type: 'survival', label: 'Keep the family fed through the season', urgency: clamp(0.5 + rng() * 0.3, 0, 1) });
-    }
+  // Attachment style secondary motive
+  if (attachmentStyle === 'anxious' && rng() < 0.7) {
+    motives.push({ type: 'belonging', label: 'Seek reassurance and closeness from others', urgency: clamp(0.6 + rng() * 0.2, 0, 1) });
+  } else if (attachmentStyle === 'avoidant' && rng() < 0.7) {
+    motives.push({ type: 'autonomy', label: 'Maintain emotional distance and self-sufficiency', urgency: clamp(0.6 + rng() * 0.2, 0, 1) });
   }
 
   return motives.slice(0, 2);
 }
 
 // ---------------------------------------------------------------------------
-// Pure helpers (shared with gameService and tests)
+// Computed structure (pure, no DB)
 // ---------------------------------------------------------------------------
 
-export function resolveSeason(day: number): Season {
-  const idx = Math.floor(day / DAYS_PER_SEASON) % SEASONS.length;
-  return SEASONS[idx] ?? 'spring';
-}
-
-export function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-export function resolveLifeStage(ageInDays: number): LifeStage {
-  const years = ageInDays / DAYS_PER_YEAR;
-  if (years < 15) return 'child';
-  if (years < 50) return 'adult';
-  return 'elder';
-}
-
-function resolveRole(lifeStage: LifeStage, sex: Sex, rng: () => number): Role {
-  if (lifeStage === 'child') return 'child';
-  if (lifeStage === 'elder') return 'elder';
-  if (rng() < 0.1) return 'healer';
-  return sex === 'male' ? (rng() < 0.75 ? 'hunter' : 'gatherer') : (rng() < 0.65 ? 'gatherer' : 'hunter');
-}
-
-function pickTraits(rng: () => number): string[] {
-  const count = 1 + Math.floor(rng() * 2);
-  const shuffled = [...TRAITS].sort(() => rng() - 0.5);
-  return shuffled.slice(0, count);
-}
-
-export function buildVillagerData(rng: () => number) {
-  const sex: Sex = rng() < 0.5 ? 'male' : 'female';
-
-  let ageInDays: number;
-  const roll = rng();
-  if (roll < 0.4) {
-    ageInDays = Math.floor(rng() * 14 * DAYS_PER_YEAR);
-  } else if (roll < 0.85) {
-    ageInDays = Math.floor((15 + rng() * 34) * DAYS_PER_YEAR);
-  } else {
-    ageInDays = Math.floor((50 + rng() * 20) * DAYS_PER_YEAR);
-  }
-
-  const lifeStage = resolveLifeStage(ageInDays);
-  const role = resolveRole(lifeStage, sex, rng);
-  const name = generateName(sex, rng);
-  const traits = pickTraits(rng);
-
-  return { name, sex, ageInDays, lifeStage, role, traits };
-}
-
-// ---------------------------------------------------------------------------
-// Pure village structure computation (no DB — fully testable)
-// ---------------------------------------------------------------------------
-
-export interface ComputedVillager {
-  tempId: string; // local reference before DB insert
-  name: string;
-  sex: Sex;
-  ageInDays: number;
-  lifeStage: LifeStage;
-  role: Role;
-  traits: string[];
-  needs: VillagerNeeds;
-  emotions: VillagerEmotions;
-  motives: VillagerMotive[];
-  householdIndex: number; // index into computed households array
-}
-
-export interface ComputedHousehold {
+export interface ComputedAgent {
   tempId: string;
   name: string;
+  sex: Sex;
+  ageInTicks: number;
+  lifeStage: LifeStage;
+  personality: BigFiveProfile;
+  attachmentStyle: AttachmentStyle;
+  needs: AgentNeeds;
+  affect: AgentAffect;
+  statusScore: number;
+  motives: AgentMotive[];
+  groupIndex: number;
 }
 
-export interface ComputedKinship {
-  fromTempId: string;
-  toTempId: string;
-  kind: string;
-  certainty: number;
+export interface ComputedGroup {
+  tempId: string;
+  label: string;
+  assignmentRule: string;
+  inGroupBias: number;
 }
 
 export interface ComputedRelationship {
@@ -189,367 +181,125 @@ export interface ComputedRelationship {
   trust: number;
 }
 
-export interface ComputedVillageStructure {
-  households: ComputedHousehold[];
-  villagers: ComputedVillager[];
-  kinshipLinks: ComputedKinship[];
+export interface ComputedExperimentStructure {
+  groups: ComputedGroup[];
+  agents: ComputedAgent[];
   relationships: ComputedRelationship[];
 }
 
-export function computeVillageStructure(seed: string, population: number): ComputedVillageStructure {
+export function computeExperimentStructure(
+  config: ExperimentConfig,
+  seed: string
+): ComputedExperimentStructure {
   const rng = createSeededRng(seed);
+  const dist = config.personalityDistribution ?? DEFAULT_PERSONALITY_DISTRIBUTION;
+  const groupConfigs: GroupConfig[] = config.groups?.length
+    ? config.groups
+    : [{ label: 'Group A', size: config.agentCount ?? 20, assignmentRule: 'random' }];
 
-  // --- Generate raw villager data ---
-  const rawVillagers = Array.from({ length: population }, (_, i) => ({
-    tempId: `v${i}`,
-    ...buildVillagerData(rng),
+  // Build group list
+  const groups: ComputedGroup[] = groupConfigs.map((g, i) => ({
+    tempId: `g${i}`,
+    label: g.label,
+    assignmentRule: g.assignmentRule,
+    inGroupBias: 0.5,
   }));
 
-  // --- Generate households ---
-  const householdCount = 3 + Math.floor(rng() * 3); // 3–5
-  const shuffledNames = [...HOUSEHOLD_NAMES].sort(() => rng() - 0.5);
-  const households: ComputedHousehold[] = Array.from({ length: householdCount }, (_, i) => ({
-    tempId: `h${i}`,
-    name: shuffledNames[i] ?? `Hearth ${i + 1}`,
-  }));
+  // Generate agents, distributing across groups
+  const agents: ComputedAgent[] = [];
+  const totalCount = config.agentCount ?? groupConfigs.reduce((s, g) => s + g.size, 0);
+  let agentIdx = 0;
 
-  // --- Bucket villagers by life stage ---
-  const adults = rawVillagers.filter((v) => v.lifeStage === 'adult');
-  const children = rawVillagers.filter((v) => v.lifeStage === 'child');
-  const elders = rawVillagers.filter((v) => v.lifeStage === 'elder');
+  for (let gi = 0; gi < groupConfigs.length; gi++) {
+    const groupConfig = groupConfigs[gi]!;
+    const groupDist = groupConfig.personalityOverride
+      ? { ...dist, ...groupConfig.personalityOverride }
+      : dist;
 
-  const adultMales = adults.filter((v) => v.sex === 'male');
-  const adultFemales = adults.filter((v) => v.sex === 'female');
+    const groupSize = groupConfig.size ?? Math.ceil(totalCount / groupConfigs.length);
 
-  // Map tempId → household index
-  const householdAssignment = new Map<string, number>();
+    for (let j = 0; j < groupSize; j++) {
+      const tempId = `a${agentIdx++}`;
+      const demographics = buildAgentDemographics(rng);
+      const personality = sampleBigFive(groupDist, rng);
+      const attachmentStyle = sampleAttachmentStyle(dist.attachmentDistribution, rng);
+      const needs = initialNeeds(personality, demographics.lifeStage, rng);
+      const affect = initialAffect(personality, rng);
+      const motives = generateMotives(personality, demographics.lifeStage, attachmentStyle, rng);
+      const name = generateName(demographics.sex, rng);
 
-  // --- Pair adult males and females, assign to households ---
-  const pairCount = Math.min(adultMales.length, adultFemales.length);
-  const pairs: Array<{ male: (typeof rawVillagers)[0]; female: (typeof rawVillagers)[0] }> = [];
-  for (let i = 0; i < pairCount; i++) {
-    pairs.push({ male: adultMales[i]!, female: adultFemales[i]! });
-    const hIdx = i % householdCount;
-    householdAssignment.set(adultMales[i]!.tempId, hIdx);
-    householdAssignment.set(adultFemales[i]!.tempId, hIdx);
-  }
-
-  // Assign remaining unpaired adults round-robin
-  const unpairedAdults = [
-    ...adultMales.slice(pairCount),
-    ...adultFemales.slice(pairCount),
-  ];
-  unpairedAdults.forEach((v, i) => {
-    householdAssignment.set(v.tempId, i % householdCount);
-  });
-
-  // --- Assign children to households of paired adults ---
-  // Track which household index has how many adults
-  const householdAdultPairs = new Array<string[]>(householdCount).fill(null as unknown as string[]).map(() => [] as string[]);
-  pairs.forEach(({ male, female }, i) => {
-    const hIdx = i % householdCount;
-    householdAdultPairs[hIdx]!.push(male.tempId, female.tempId);
-  });
-
-  children.forEach((child, i) => {
-    householdAssignment.set(child.tempId, i % householdCount);
-  });
-
-  // --- Assign elders to smallest household ---
-  elders.forEach((elder) => {
-    const counts = Array.from({ length: householdCount }, (_, idx) =>
-      [...householdAssignment.values()].filter((h) => h === idx).length
-    );
-    const smallest = counts.indexOf(Math.min(...counts));
-    householdAssignment.set(elder.tempId, smallest);
-  });
-
-  // Build partner lookup: tempId → partner name (for motive generation)
-  const partnerNameByTempId = new Map<string, string>();
-  for (let i = 0; i < pairCount; i++) {
-    partnerNameByTempId.set(adultMales[i]!.tempId, adultFemales[i]!.name);
-    partnerNameByTempId.set(adultFemales[i]!.tempId, adultMales[i]!.name);
-  }
-
-  // --- Attach household index to each villager, compute needs/emotions/motives ---
-  const villagers: ComputedVillager[] = rawVillagers.map((v) => {
-    const hIdx = householdAssignment.get(v.tempId) ?? 0;
-
-    const needs: VillagerNeeds = {
-      hunger: 0,
-      safety: v.lifeStage === 'elder' ? clamp(0.55 + rng() * 0.2, 0, 1) : clamp(0.65 + rng() * 0.2, 0, 1),
-      belonging: clamp(0.4 + rng() * 0.3, 0, 1),
-      status: clamp(0.3 + rng() * 0.4, 0, 1),
-    };
-
-    const emotions: VillagerEmotions = {
-      fear: clamp(0.05 + rng() * 0.1, 0, 1),
-      grief: 0,
-      hope: v.lifeStage === 'child' ? clamp(0.55 + rng() * 0.2, 0, 1) : clamp(0.4 + rng() * 0.2, 0, 1),
-      anger: clamp(rng() * 0.1, 0, 1),
-    };
-
-    const motives = generateMotives(
-      v.lifeStage,
-      v.role,
-      v.traits,
-      partnerNameByTempId.get(v.tempId) ?? null,
-      rng
-    );
-
-    return { ...v, householdIndex: hIdx, needs, emotions, motives };
-  });
-
-  // --- Generate kinship links ---
-  const kinshipLinks: ComputedKinship[] = [];
-
-  // Pair bonds (both directions)
-  pairs.forEach(({ male, female }) => {
-    kinshipLinks.push({ fromTempId: male.tempId, toTempId: female.tempId, kind: 'pair_bonded_partner', certainty: 1.0 });
-    kinshipLinks.push({ fromTempId: female.tempId, toTempId: male.tempId, kind: 'pair_bonded_partner', certainty: 1.0 });
-  });
-
-  // Parent-child links: children in a household whose household index has a pair
-  const pairByHousehold = new Map<number, { male: (typeof rawVillagers)[0]; female: (typeof rawVillagers)[0] }>();
-  pairs.forEach((pair, i) => {
-    pairByHousehold.set(i % householdCount, pair);
-  });
-
-  // Group children by household
-  const childrenByHousehold = new Map<number, typeof villagers[0][]>();
-  villagers.filter((v) => v.lifeStage === 'child').forEach((child) => {
-    const hIdx = child.householdIndex;
-    if (!childrenByHousehold.has(hIdx)) childrenByHousehold.set(hIdx, []);
-    childrenByHousehold.get(hIdx)!.push(child);
-  });
-
-  childrenByHousehold.forEach((kids, hIdx) => {
-    const pair = pairByHousehold.get(hIdx);
-    if (!pair) return;
-
-    kids.forEach((child) => {
-      // parent → child
-      kinshipLinks.push({ fromTempId: pair.male.tempId, toTempId: child.tempId, kind: 'child', certainty: 1.0 });
-      kinshipLinks.push({ fromTempId: pair.female.tempId, toTempId: child.tempId, kind: 'child', certainty: 1.0 });
-      // child → parent
-      kinshipLinks.push({ fromTempId: child.tempId, toTempId: pair.male.tempId, kind: 'parent', certainty: 1.0 });
-      kinshipLinks.push({ fromTempId: child.tempId, toTempId: pair.female.tempId, kind: 'parent', certainty: 1.0 });
-    });
-
-    // Sibling links between children in the same household
-    for (let a = 0; a < kids.length; a++) {
-      for (let b = a + 1; b < kids.length; b++) {
-        kinshipLinks.push({ fromTempId: kids[a]!.tempId, toTempId: kids[b]!.tempId, kind: 'sibling', certainty: 1.0 });
-        kinshipLinks.push({ fromTempId: kids[b]!.tempId, toTempId: kids[a]!.tempId, kind: 'sibling', certainty: 1.0 });
-      }
+      agents.push({
+        tempId,
+        name,
+        sex: demographics.sex,
+        ageInTicks: demographics.ageInTicks,
+        lifeStage: demographics.lifeStage,
+        personality,
+        attachmentStyle,
+        needs,
+        affect,
+        statusScore: clamp(0.4 + rng() * 0.2, 0, 1),
+        motives,
+        groupIndex: gi,
+      });
     }
-  });
+  }
 
-  // --- Generate relationship edges ---
+  // Generate initial within-group relationships (similarity-attraction hypothesis)
+  // Ref: Byrne (1971) — Attraction Paradigm; similarity predicts liking.
   const relationships: ComputedRelationship[] = [];
+  const seen = new Set<string>();
 
   const addEdge = (from: string, to: string, type: string, strength: number, trust: number) => {
-    relationships.push({ fromTempId: from, toTempId: to, type, strength, trust });
-    relationships.push({ fromTempId: to, toTempId: from, type, strength, trust });
+    const key1 = `${from}:${to}`;
+    const key2 = `${to}:${from}`;
+    if (!seen.has(key1)) {
+      seen.add(key1);
+      relationships.push({ fromTempId: from, toTempId: to, type, strength, trust });
+    }
+    if (!seen.has(key2)) {
+      seen.add(key2);
+      relationships.push({ fromTempId: to, toTempId: from, type, strength, trust });
+    }
   };
 
-  // Pair bonds
-  pairs.forEach(({ male, female }) => {
-    addEdge(male.tempId, female.tempId, 'pair_bond', clamp(0.7 + rng() * 0.3, 0, 1), clamp(0.7 + rng() * 0.2, 0, 1));
-  });
+  // Within-group initial bonds
+  for (let gi = 0; gi < groups.length; gi++) {
+    const groupAgents = agents.filter((a) => a.groupIndex === gi);
+    for (let a = 0; a < groupAgents.length; a++) {
+      for (let b = a + 1; b < groupAgents.length; b++) {
+        const ag = groupAgents[a]!;
+        const bg = groupAgents[b]!;
+        // OCEAN similarity score (Euclidean-ish, normalized)
+        const sim = 1 - (
+          Math.abs(ag.personality.openness - bg.personality.openness) +
+          Math.abs(ag.personality.conscientiousness - bg.personality.conscientiousness) +
+          Math.abs(ag.personality.extraversion - bg.personality.extraversion) +
+          Math.abs(ag.personality.agreeableness - bg.personality.agreeableness) +
+          Math.abs(ag.personality.neuroticism - bg.personality.neuroticism)
+        ) / 5;
 
-  // Parent-child kin
-  childrenByHousehold.forEach((kids, hIdx) => {
-    const pair = pairByHousehold.get(hIdx);
-    if (!pair) return;
-    kids.forEach((child) => {
-      addEdge(pair.male.tempId, child.tempId, 'kin', 0.8, 0.85);
-      addEdge(pair.female.tempId, child.tempId, 'kin', 0.8, 0.85);
-    });
-    // Sibling kin
-    for (let a = 0; a < kids.length; a++) {
-      for (let b = a + 1; b < kids.length; b++) {
-        addEdge(kids[a]!.tempId, kids[b]!.tempId, 'kin', clamp(0.6 + rng() * 0.3, 0, 1), clamp(0.65 + rng() * 0.2, 0, 1));
+        const strength = clamp(0.15 + sim * 0.35 + rng() * 0.1, 0, 1);
+        const trust = clamp(0.15 + sim * 0.3 + rng() * 0.1, 0, 1);
+        addEdge(ag.tempId, bg.tempId, 'social', strength, trust);
       }
     }
-  });
+  }
 
-  // Household non-kin adults (friendship seed)
-  for (let hIdx = 0; hIdx < householdCount; hIdx++) {
-    const houseAdults = villagers.filter((v) => v.householdIndex === hIdx && v.lifeStage === 'adult');
-    for (let a = 0; a < houseAdults.length; a++) {
-      for (let b = a + 1; b < houseAdults.length; b++) {
-        const aId = houseAdults[a]!.tempId;
-        const bId = houseAdults[b]!.tempId;
-        // Skip if already covered by pair_bond or kin
-        const alreadyLinked = relationships.some(
-          (r) => (r.fromTempId === aId && r.toTempId === bId) || (r.fromTempId === bId && r.toTempId === aId)
-        );
-        if (!alreadyLinked) {
-          addEdge(aId, bId, 'friendship', clamp(0.4 + rng() * 0.3, 0, 1), clamp(0.4 + rng() * 0.3, 0, 1));
+  // Sparse cross-group weak ties (Granovetter 1973 — strength of weak ties)
+  if (groups.length > 1) {
+    const crossProb = 0.15;
+    for (let a = 0; a < agents.length; a++) {
+      for (let b = a + 1; b < agents.length; b++) {
+        if (agents[a]!.groupIndex === agents[b]!.groupIndex) continue;
+        if (rng() < crossProb) {
+          addEdge(agents[a]!.tempId, agents[b]!.tempId, 'acquaintance',
+            clamp(0.05 + rng() * 0.15, 0, 1),
+            clamp(0.05 + rng() * 0.15, 0, 1));
         }
       }
     }
   }
 
-  // Deduplicate relationships (addEdge adds both directions — filter to unique pairs)
-  const seen = new Set<string>();
-  const dedupedRelationships: ComputedRelationship[] = [];
-  relationships.forEach((r) => {
-    const key = `${r.fromTempId}:${r.toTempId}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      dedupedRelationships.push(r);
-    }
-  });
-
-  return { households, villagers, kinshipLinks, relationships: dedupedRelationships };
-}
-
-// ---------------------------------------------------------------------------
-// Effectful village generation (calls compute, then persists to DB)
-// ---------------------------------------------------------------------------
-
-export async function generateVillage(input: CreateGameInput): Promise<VillageView> {
-  const seed = input.seed ?? randomUUID();
-  const rng = createSeededRng(seed);
-
-  const population = input.startingPopulation ?? 16;
-  const startingFood = input.startingFood ?? Math.round(110 + rng() * 40);
-  const weatherHarsh = Number((0.2 + rng() * 0.5).toFixed(3));
-  const diseaseRisk = Number((0.1 + rng() * 0.4).toFixed(3));
-
-  const structure = computeVillageStructure(seed, population);
-
-  // Use interactive transaction so we can capture IDs before cross-referencing
-  const result = await prisma.$transaction(async (tx) => {
-    // 1. Create village core
-    const village = await tx.village.create({
-      data: {
-        seed,
-        name: input.name ?? 'Spiritvale',
-        population,
-        resources: {
-          create: { food: startingFood, weatherHarsh, diseaseRisk },
-        },
-        events: {
-          create: {
-            day: 0,
-            type: 'world_created',
-            title: 'A new village takes root.',
-            facts: { seed, population, startingFood },
-          },
-        },
-      },
-      include: { resources: true, events: true },
-    });
-
-    // 2. Create households, capture real IDs
-    const householdIdMap = new Map<string, string>(); // tempId → real DB id
-    for (const h of structure.households) {
-      const row = await tx.household.create({
-        data: { villageId: village.id, name: h.name },
-      });
-      householdIdMap.set(h.tempId, row.id);
-    }
-
-    // 3. Create culture state
-    await tx.cultureState.create({
-      data: {
-        villageId: village.id,
-        sharingNorm:        clamp(0.5 + rng() * 0.3, 0, 1),
-        punishmentSeverity: clamp(0.3 + rng() * 0.3, 0, 1),
-        outsiderTolerance:  clamp(0.2 + rng() * 0.3, 0, 1),
-        prestigeByAge:      clamp(0.6 + rng() * 0.2, 0, 1),
-        prestigeBySkill:    clamp(0.4 + rng() * 0.3, 0, 1),
-        ritualIntensity:    clamp(0.2 + rng() * 0.4, 0, 1),
-        spiritualFear:      clamp(0.3 + rng() * 0.4, 0, 1),
-        kinLoyaltyNorm:     clamp(0.7 + rng() * 0.2, 0, 1),
-      },
-    });
-
-    // 4. Create villagers with household references, capture real IDs
-    const villagerIdMap = new Map<string, string>(); // tempId → real DB id
-    for (const v of structure.villagers) {
-      const row = await tx.villager.create({
-        data: {
-          villageId: village.id,
-          householdId: householdIdMap.get(`h${v.householdIndex}`) ?? null,
-          name: v.name,
-          sex: v.sex,
-          ageInDays: v.ageInDays,
-          lifeStage: v.lifeStage,
-          role: v.role,
-          traits: v.traits,
-          needs: v.needs as object,
-          emotions: v.emotions as object,
-          motives: v.motives as object[],
-        },
-      });
-      villagerIdMap.set(v.tempId, row.id);
-    }
-
-    // 4. Create kinship links
-    for (const k of structure.kinshipLinks) {
-      const fromId = villagerIdMap.get(k.fromTempId);
-      const toId = villagerIdMap.get(k.toTempId);
-      if (fromId && toId) {
-        await tx.kinshipLink.create({
-          data: { villageId: village.id, fromVillagerId: fromId, toVillagerId: toId, kind: k.kind, certainty: k.certainty },
-        });
-      }
-    }
-
-    // 5. Create relationship edges
-    for (const r of structure.relationships) {
-      const fromId = villagerIdMap.get(r.fromTempId);
-      const toId = villagerIdMap.get(r.toTempId);
-      if (fromId && toId) {
-        await tx.relationshipEdge.create({
-          data: { villageId: village.id, fromVillagerId: fromId, toVillagerId: toId, type: r.type, strength: r.strength, trust: r.trust },
-        });
-      }
-    }
-
-    return village;
-  });
-
-  // Load the full view via gameService helper
-  const { getGame } = await import('@/lib/server/gameService');
-  return (await getGame(result.id))!;
-}
-
-// ---------------------------------------------------------------------------
-// Shared mapper used by gameService and tickEngine
-// ---------------------------------------------------------------------------
-
-export function mapVillager(v: {
-  id: string;
-  name: string;
-  sex: string;
-  ageInDays: number;
-  lifeStage: string;
-  role: string;
-  traits: unknown;
-  householdId: string | null;
-  needs: unknown;
-  emotions: unknown;
-  household?: { name: string } | null;
-}) {
-  const defaultNeeds: VillagerNeeds = { hunger: 0, safety: 0.7, belonging: 0.5, status: 0.5 };
-  const defaultEmotions: VillagerEmotions = { fear: 0.1, grief: 0, hope: 0.5, anger: 0 };
-
-  return {
-    id: v.id,
-    name: v.name,
-    sex: v.sex as Sex,
-    ageInDays: v.ageInDays,
-    lifeStage: v.lifeStage as LifeStage,
-    role: v.role as Role,
-    traits: v.traits as string[],
-    householdId: v.householdId,
-    householdName: v.household?.name ?? null,
-    needs: (v.needs as VillagerNeeds) ?? defaultNeeds,
-    emotions: (v.emotions as VillagerEmotions) ?? defaultEmotions,
-  };
+  return { groups, agents, relationships };
 }
