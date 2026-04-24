@@ -1,177 +1,127 @@
-import { createSeededRng } from '@/lib/rng/seededRng';
-import { clamp } from './worldGenerator';
-import type { TickContext, MutableVillager, MutableRelationshipEdge } from './tickContext';
-import type { VillagerMotive } from '@/lib/domain/types';
+import { clamp } from '@/lib/utils/math';
+import * as C from './coefficients';
+import type { SimulationTickContext, MutableAgent } from './tickContext';
 
-// ---------------------------------------------------------------------------
-// Incident resolution — motive-driven narrative events
-// ---------------------------------------------------------------------------
+// OCEAN-driven narrative incidents.
+// Each eligible agent may trigger one incident per tick.
+// Ref: McCrae & Costa (1999) — Five-Factor Theory; Hofstede (2001)
 
-function findRelationshipEdge(
-  ctx: TickContext,
-  fromId: string,
-  toId: string
-): MutableRelationshipEdge | undefined {
-  return ctx.relationshipEdges.find(
-    (e) => e.fromVillagerId === fromId && e.toVillagerId === toId
-  );
-}
+export function stepResolveBehaviorIncidents(ctx: SimulationTickContext): void {
+  const { agents, culture, rng, metrics } = ctx;
+  const live = agents.filter((a) => !ctx.exitedAgentIds.includes(a.id) && a.lifeStage !== 'child');
 
-function nudgeRelationship(
-  ctx: TickContext,
-  fromId: string,
-  toId: string,
-  strengthDelta: number,
-  trustDelta: number,
-  day: number
-): void {
-  const edge = findRelationshipEdge(ctx, fromId, toId);
-  if (!edge) return;
-  edge.strength = clamp(edge.strength + strengthDelta, 0, 1);
-  edge.trust = clamp(edge.trust + trustDelta, 0, 1);
-  // Mark for persistence (dedup by id)
-  const existing = ctx.updatedRelationships.find((r) => r.id === edge.id);
-  if (existing) {
-    existing.strength = edge.strength;
-    existing.trust = edge.trust;
-    existing.lastInteractionDay = day;
-  } else {
-    ctx.updatedRelationships.push({ id: edge.id, strength: edge.strength, trust: edge.trust, lastInteractionDay: day });
-  }
-}
+  for (const agent of live) {
+    const maxUrgency = agent.motives.reduce((m, mv) => Math.max(m, mv.urgency), 0);
+    if (rng() > C.INCIDENT_BASE_PROBABILITY * (0.5 + maxUrgency * 0.5)) continue;
 
-function resolveIncident(
-  ctx: TickContext,
-  actor: MutableVillager,
-  motive: VillagerMotive,
-  rng: () => number
-): void {
-  const deadSet = new Set(ctx.deadIds);
-  const living = ctx.villagers.filter((v) => !deadSet.has(v.id));
-  const householdMembers = (ctx.householdMembersById.get(actor.id) ?? [])
-    .map((id) => living.find((v) => v.id === id))
-    .filter((v): v is MutableVillager => !!v);
+    const roll = rng();
+    const p = agent.personality;
 
-  const emitIncident = (title: string, targetId?: string, targetName?: string) => {
-    ctx.emittedEvents.push({
-      villageId: ctx.villageId,
-      day: ctx.day,
-      type: 'villager_incident',
-      title,
-      facts: {
-        motiveType: motive.type,
-        actorId: actor.id,
-        actorName: actor.name,
-        ...(targetId ? { targetId, targetName } : {}),
-      },
-    });
-  };
-
-  switch (motive.type) {
-    case 'status': {
-      // Challenge a random other adult; trust penalty scales with punishmentSeverity
-      const others = living.filter((v) => v.id !== actor.id && v.lifeStage === 'adult');
-      if (others.length === 0) break;
-      const target = others[Math.floor(rng() * others.length)]!;
-      emitIncident(`${actor.name} presses hard for standing among the group.`, target.id, target.name);
-      const punishScale = ctx.cultureState?.punishmentSeverity ?? 0.4;
-      const trustPenalty = -(0.02 + punishScale * 0.04);
-      nudgeRelationship(ctx, actor.id, target.id, 0, trustPenalty, ctx.day);
-      nudgeRelationship(ctx, target.id, actor.id, 0, trustPenalty * 0.7, ctx.day);
-      break;
-    }
-    case 'kin_protection': {
-      // Find household member with low safety
-      const vulnerable = householdMembers.find((v) => v.needs.safety < 0.4);
-      const target = vulnerable ?? householdMembers[Math.floor(rng() * householdMembers.length)];
-      if (!target) break;
-      emitIncident(`${actor.name} keeps close watch over ${target.name}.`, target.id, target.name);
-      nudgeRelationship(ctx, actor.id, target.id, 0.04, 0, ctx.day);
-      nudgeRelationship(ctx, target.id, actor.id, 0.02, 0, ctx.day);
-      break;
-    }
-    case 'survival': {
-      if (ctx.foodAfter < 300 || ctx.starving) {
-        emitIncident(`${actor.name} hunts beyond the usual range, pushed by hunger.`);
-      }
-      break;
-    }
-    case 'belonging': {
-      if (householdMembers.length === 0) break;
-      const target = householdMembers[Math.floor(rng() * householdMembers.length)]!;
-      emitIncident(`${actor.name} seeks comfort with ${target.name}.`, target.id, target.name);
-      nudgeRelationship(ctx, actor.id, target.id, 0.02, 0, ctx.day);
-      nudgeRelationship(ctx, target.id, actor.id, 0.01, 0, ctx.day);
-      break;
-    }
-    case 'tradition': {
-      if (actor.lifeStage !== 'elder') break;
-      emitIncident(`${actor.name} gathers the hearth for the old rites.`);
-      // Nudge culture toward more ritual (if culture loaded)
-      if (ctx.cultureState) {
-        ctx.cultureState.ritualIntensity = clamp(ctx.cultureState.ritualIntensity + 0.003, 0, 1);
-        if (ctx.updatedCulture) ctx.updatedCulture.ritualIntensity = ctx.cultureState.ritualIntensity;
-      }
-      break;
-    }
-    case 'reform': {
-      if (!actor.traits.includes('curious')) break;
-      if (householdMembers.length === 0) break;
-      const target = householdMembers[Math.floor(rng() * householdMembers.length)]!;
-      emitIncident(`${actor.name} questions how things have always been done.`, target.id, target.name);
-      nudgeRelationship(ctx, actor.id, target.id, 0, -0.02, ctx.day);
-      break;
-    }
-    case 'autonomy': {
-      if (actor.role !== 'hunter') break;
-      emitIncident(`${actor.name} slips away from the group to hunt alone.`);
-      break;
-    }
-    case 'romance': {
-      // Find partner via pair_bond relationship
-      const partnerEdge = ctx.relationshipEdges.find(
-        (e) => e.fromVillagerId === actor.id && e.type === 'pair_bond'
-      );
-      if (!partnerEdge) break;
-      const partner = living.find((v) => v.id === partnerEdge.toVillagerId);
-      if (!partner) break;
-      emitIncident(`${actor.name} steals time with ${partner.name} amid the work.`, partner.id, partner.name);
-      nudgeRelationship(ctx, actor.id, partner.id, 0.03, 0, ctx.day);
-      nudgeRelationship(ctx, partner.id, actor.id, 0.02, 0, ctx.day);
-      break;
+    if (agent.affect.stress > C.BREAKDOWN_NEGATIVE_AFFECT_THRESHOLD && p.neuroticism > 0.6) {
+      emitBreakdown(agent, ctx);
+      metrics.conflictCount++;
+    } else if (p.openness > 0.65 && culture.uncertaintyAvoidance > 0.6 && roll < p.openness * C.REFORM_INCIDENT_HIGH_OPENNESS_WEIGHT) {
+      emitDissent(agent, ctx);
+    } else if (p.conscientiousness > 0.65 && roll < p.conscientiousness * C.NORM_ENFORCEMENT_HIGH_CONSCIENTIOUSNESS_WEIGHT * (1 + culture.uncertaintyAvoidance)) {
+      emitNormEnforcement(agent, live, ctx);
+      metrics.normEnforcementCount++;
+    } else if (p.agreeableness < 0.35 && roll < (1 - p.agreeableness) * C.CONFLICT_INCIDENT_LOW_AGREEABLENESS_WEIGHT) {
+      emitConflict(agent, live, ctx);
+      metrics.conflictCount++;
+    } else if (p.extraversion > 0.65 && roll < p.extraversion * C.COALITION_INCIDENT_HIGH_EXTRAVERSION_WEIGHT) {
+      emitCoalitionBuilding(agent, live, ctx);
+      metrics.cooperationCount++;
+    } else if (agent.attachmentStyle === 'avoidant' && agent.needs.belonging < 0.5 && roll < C.WITHDRAWAL_AVOIDANT_WEIGHT) {
+      emitWithdrawal(agent, ctx);
+    } else if (agent.attachmentStyle === 'anxious' && agent.needs.belonging < 0.4) {
+      emitHelpSeeking(agent, live, ctx);
     }
   }
 }
 
-export function stepResolveMotiveIncidents(ctx: TickContext): void {
-  const deadSet = new Set(ctx.deadIds);
+function emitBreakdown(agent: MutableAgent, ctx: SimulationTickContext): void {
+  agent.affect.negativeAffect = clamp(agent.affect.negativeAffect + 0.1, 0, 1);
+  agent.affect.stress = clamp(agent.affect.stress + 0.08, 0, 1);
+  agent.statusScore = clamp(agent.statusScore - 0.04, 0, 1);
+  ctx.emittedEvents.push({
+    experimentId: ctx.experimentId, tick: ctx.tick, type: 'emotional_breakdown',
+    title: `${agent.name} is overwhelmed by stress.`,
+    facts: { agentId: agent.id, neuroticism: agent.personality.neuroticism, stress: agent.affect.stress },
+  });
+}
 
-  for (const villager of ctx.villagers) {
-    if (deadSet.has(villager.id)) continue;
-    if (villager.lifeStage === 'child') continue;
+function emitDissent(agent: MutableAgent, ctx: SimulationTickContext): void {
+  const socialCost = ctx.culture.uncertaintyAvoidance * 0.06;
+  agent.statusScore = clamp(agent.statusScore - socialCost, 0, 1);
+  agent.needs.belonging = clamp(agent.needs.belonging - socialCost, 0, 1);
+  ctx.emittedEvents.push({
+    experimentId: ctx.experimentId, tick: ctx.tick, type: 'dissent_act',
+    title: `${agent.name} challenges the group's accepted approach.`,
+    facts: { agentId: agent.id, openness: agent.personality.openness, ua: ctx.culture.uncertaintyAvoidance, socialCost },
+  });
+}
 
-    const motives = villager.motives ?? [];
-    if (motives.length === 0) continue;
+function emitNormEnforcement(agent: MutableAgent, all: MutableAgent[], ctx: SimulationTickContext): void {
+  const targets = all.filter((a) => a.id !== agent.id && a.groupId === agent.groupId && a.personality.conscientiousness < 0.4);
+  if (targets.length === 0) return;
+  const target = targets[Math.floor(ctx.rng() * targets.length)]!;
+  target.statusScore = clamp(target.statusScore - 0.04, 0, 1);
+  agent.statusScore = clamp(agent.statusScore + C.STATUS_ENFORCEMENT_GAIN, 0, 1);
+  ctx.emittedEvents.push({
+    experimentId: ctx.experimentId, tick: ctx.tick, type: 'norm_enforcement_act',
+    title: `${agent.name} calls out ${target.name} for not meeting group expectations.`,
+    facts: { enforcerId: agent.id, targetId: target.id, targetConscientiousness: target.personality.conscientiousness },
+  });
+}
 
-    // Only process highest-urgency motive
-    const topMotive = motives.reduce((best, m) => (m.urgency > best.urgency ? m : best), motives[0]!);
-    if (topMotive.urgency <= 0.65) continue;
+function emitConflict(agent: MutableAgent, all: MutableAgent[], ctx: SimulationTickContext): void {
+  const targets = all.filter((a) => a.id !== agent.id && a.groupId === agent.groupId);
+  if (targets.length === 0) return;
+  const target = targets[Math.floor(ctx.rng() * targets.length)]!;
+  agent.affect.stress = clamp(agent.affect.stress + 0.04, 0, 1);
+  target.affect.negativeAffect = clamp(target.affect.negativeAffect + 0.06, 0, 1);
+  target.needs.safety = clamp(target.needs.safety - 0.04, 0, 1);
+  ctx.emittedEvents.push({
+    experimentId: ctx.experimentId, tick: ctx.tick, type: 'interpersonal_conflict',
+    title: `${agent.name} clashes with ${target.name}.`,
+    facts: { agentId: agent.id, targetId: target.id, agreeableness: agent.personality.agreeableness },
+  });
+}
 
-    // Per-villager deterministic RNG for this tick
-    const rng = createSeededRng(`${ctx.seed}:incident:${ctx.day}:${villager.id}`);
-
-    // Culture norms raise the probability cap for certain motives
-    const baseProb = topMotive.urgency * 0.07;
-    let probCap: number;
-    if (topMotive.type === 'status') {
-      probCap = Math.min(0.15, baseProb * (1 + (ctx.cultureState?.punishmentSeverity ?? 0.4) * 0.5));
-    } else if (topMotive.type === 'kin_protection') {
-      probCap = Math.min(0.15, baseProb * (1 + (ctx.cultureState?.kinLoyaltyNorm ?? 0.8) * 0.5));
-    } else {
-      probCap = baseProb;
-    }
-    if (rng() >= probCap) continue;
-
-    resolveIncident(ctx, villager, topMotive, rng);
+function emitCoalitionBuilding(agent: MutableAgent, all: MutableAgent[], ctx: SimulationTickContext): void {
+  const partners = all.filter((a) => a.id !== agent.id && a.groupId === agent.groupId).slice(0, 3);
+  if (partners.length === 0) return;
+  for (const partner of partners) {
+    partner.needs.belonging = clamp(partner.needs.belonging + 0.04, 0, 1);
+    partner.affect.positiveAffect = clamp(partner.affect.positiveAffect + 0.03, 0, 1);
   }
+  agent.needs.belonging = clamp(agent.needs.belonging + 0.05, 0, 1);
+  ctx.emittedEvents.push({
+    experimentId: ctx.experimentId, tick: ctx.tick, type: 'coalition_building',
+    title: `${agent.name} rallies others around a shared purpose.`,
+    facts: { agentId: agent.id, extraversion: agent.personality.extraversion, partnerCount: partners.length },
+  });
+}
+
+function emitWithdrawal(agent: MutableAgent, ctx: SimulationTickContext): void {
+  agent.needs.autonomy = clamp(agent.needs.autonomy + 0.05, 0, 1);
+  agent.needs.belonging = clamp(agent.needs.belonging - 0.03, 0, 1);
+  ctx.emittedEvents.push({
+    experimentId: ctx.experimentId, tick: ctx.tick, type: 'social_withdrawal',
+    title: `${agent.name} withdraws from the group, preferring solitude.`,
+    facts: { agentId: agent.id, attachmentStyle: agent.attachmentStyle },
+  });
+}
+
+function emitHelpSeeking(agent: MutableAgent, all: MutableAgent[], ctx: SimulationTickContext): void {
+  const targets = all.filter((a) => a.id !== agent.id && a.groupId === agent.groupId && a.personality.agreeableness > 0.5);
+  if (targets.length === 0) return;
+  const target = targets[Math.floor(ctx.rng() * targets.length)]!;
+  agent.needs.belonging = clamp(agent.needs.belonging + 0.06, 0, 1);
+  target.needs.esteem = clamp(target.needs.esteem + 0.03, 0, 1);
+  ctx.emittedEvents.push({
+    experimentId: ctx.experimentId, tick: ctx.tick, type: 'help_seeking',
+    title: `${agent.name} reaches out to ${target.name} for support.`,
+    facts: { agentId: agent.id, targetId: target.id, attachmentStyle: agent.attachmentStyle },
+  });
 }

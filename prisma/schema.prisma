@@ -7,7 +7,150 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Village {
+// ---------------------------------------------------------------------------
+// Social Psychology Sandbox — new models
+// ---------------------------------------------------------------------------
+
+model Experiment {
+  id          String   @id @default(uuid())
+  name        String
+  description String   @default("")
+  hypothesis  String   @default("")
+  contextType String   @default("neutral")
+  status      String   @default("setup") // setup | running | paused | completed
+  tick        Int      @default(0)
+  seed        String
+  // Stored as JSON blobs — deserialized into typed interfaces in service layer
+  personalityDistribution Json
+  culture                 Json  // HofstedeCulture
+  scheduledInterventions  Json  @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  groups       SocialGroup[]
+  agents       Agent[]
+  relationships RelationshipEdge[]
+  events       EventRecord[]
+  metrics      MetricSnapshot[]
+  interventions InterventionRecord[]
+
+  @@index([status])
+}
+
+model SocialGroup {
+  id           String     @id @default(uuid())
+  experimentId String
+  label        String
+  assignmentRule String   @default("random")
+  inGroupBias  Float      @default(0.5)
+  cohesionIndex Float     @default(0.0)
+  statusRank   Float      @default(0.0)
+
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  agents     Agent[]
+
+  @@index([experimentId])
+}
+
+model Agent {
+  id           String  @id @default(uuid())
+  experimentId String
+  groupId      String?
+  name         String
+  sex          String
+  ageInTicks   Int     @default(0)
+  lifeStage    String  @default("adult")
+  // BigFiveProfile stored as JSON
+  personality  Json
+  attachmentStyle String @default("secure")
+  // AgentNeeds stored as JSON
+  needs        Json
+  // AgentAffect stored as JSON
+  affect       Json
+  statusScore  Float   @default(0.5)
+  motives      Json    @default("[]")
+
+  experiment Experiment  @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  group      SocialGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  relationshipFrom RelationshipEdge[] @relation("RelationshipFrom")
+  relationshipTo   RelationshipEdge[] @relation("RelationshipTo")
+
+  @@index([experimentId])
+  @@index([groupId])
+}
+
+model RelationshipEdge {
+  id                    String @id @default(uuid())
+  experimentId          String
+  fromAgentId           String
+  toAgentId             String
+  type                  String @default("social")
+  strength              Float  @default(0.3)
+  trust                 Float  @default(0.3)
+  lastInteractionTick   Int    @default(0)
+
+  experiment  Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  fromAgent   Agent      @relation("RelationshipFrom", fields: [fromAgentId], references: [id], onDelete: Cascade)
+  toAgent     Agent      @relation("RelationshipTo", fields: [toAgentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId])
+  @@index([fromAgentId])
+  @@index([toAgentId])
+}
+
+model MetricSnapshot {
+  id           String   @id @default(uuid())
+  experimentId String
+  tick         Int
+  metrics      Json     // MetricSnapshot interface values
+  createdAt    DateTime @default(now())
+
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId, tick])
+}
+
+model InterventionRecord {
+  id            String   @id @default(uuid())
+  experimentId  String
+  tick          Int
+  type          String
+  targetGroupId String?
+  targetAgentId String?
+  magnitude     Float    @default(0.5)
+  durationTicks Int      @default(1)
+  remainingTicks Int     @default(0)
+  params        Json     @default("{}")
+  resolved      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId, tick])
+  @@index([experimentId, resolved])
+}
+
+model EventRecord {
+  id           String   @id @default(uuid())
+  experimentId String
+  tick         Int
+  type         String
+  title        String
+  facts        Json
+  createdAt    DateTime @default(now())
+
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId, tick])
+}
+
+// ---------------------------------------------------------------------------
+// Legacy models (kept for reference during transition — will be dropped in a
+// follow-up migration once the new engine is validated)
+// ---------------------------------------------------------------------------
+
+model Village_legacy {
   id         String   @id @default(uuid())
   seed       String
   name       String
@@ -17,58 +160,9 @@ model Village {
   population Int
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-
-  resources         ResourceState?
-  cultureState      CultureState?
-  events            EventRecord[]
-  villagers         Villager[]
-  households        Household[]
-  kinshipLinks      KinshipLink[]
-  relationshipEdges RelationshipEdge[]
-
-  @@index([day])
 }
 
-model ResourceState {
-  id                    String @id @default(uuid())
-  villageId             String @unique
-  food                        Float
-  weatherHarsh                Float
-  diseaseRisk                 Float
-  blessingDaysRemaining       Int   @default(0)
-  stormDaysRemaining          Int   @default(0)
-  healthBlessingDaysRemaining Int   @default(0)
-
-  village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
-}
-
-model CultureState {
-  id                 String @id @default(uuid())
-  villageId          String @unique
-  sharingNorm        Float  @default(0.6)
-  punishmentSeverity Float  @default(0.4)
-  outsiderTolerance  Float  @default(0.3)
-  prestigeByAge      Float  @default(0.7)
-  prestigeBySkill    Float  @default(0.5)
-  ritualIntensity    Float  @default(0.4)
-  spiritualFear      Float  @default(0.5)
-  kinLoyaltyNorm     Float  @default(0.8)
-
-  village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
-}
-
-model Household {
-  id        String     @id @default(uuid())
-  villageId String
-  name      String
-
-  village   Village    @relation(fields: [villageId], references: [id], onDelete: Cascade)
-  villagers Villager[]
-
-  @@index([villageId])
-}
-
-model Villager {
+model Villager_legacy {
   id          String  @id @default(uuid())
   villageId   String
   householdId String?
@@ -78,66 +172,13 @@ model Villager {
   lifeStage   String
   role        String
   traits      Json
-  needs       Json    @default("{\"hunger\":0,\"safety\":0.7,\"belonging\":0.5,\"status\":0.5}")
-  emotions    Json    @default("{\"fear\":0.1,\"grief\":0,\"hope\":0.5,\"anger\":0}")
+  needs       Json
+  emotions    Json
   motives     Json    @default("[]")
-
-  village   Village    @relation(fields: [villageId], references: [id], onDelete: Cascade)
-  household Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
-
-  kinshipFrom      KinshipLink[]      @relation("KinshipFrom")
-  kinshipTo        KinshipLink[]      @relation("KinshipTo")
-  relationshipFrom RelationshipEdge[] @relation("RelationshipFrom")
-  relationshipTo   RelationshipEdge[] @relation("RelationshipTo")
-
-  @@index([villageId])
-  @@index([householdId])
 }
 
-model KinshipLink {
-  id             String @id @default(uuid())
-  villageId      String
-  fromVillagerId String
-  toVillagerId   String
-  kind           String
-  certainty      Float  @default(1.0)
-
-  village      Village  @relation(fields: [villageId], references: [id], onDelete: Cascade)
-  fromVillager Villager @relation("KinshipFrom", fields: [fromVillagerId], references: [id], onDelete: Cascade)
-  toVillager   Villager @relation("KinshipTo", fields: [toVillagerId], references: [id], onDelete: Cascade)
-
-  @@index([villageId])
-  @@index([fromVillagerId])
-}
-
-model RelationshipEdge {
-  id                 String @id @default(uuid())
-  villageId          String
-  fromVillagerId     String
-  toVillagerId       String
-  type               String
-  strength           Float  @default(0.5)
-  trust              Float  @default(0.5)
-  lastInteractionDay Int    @default(0)
-
-  village      Village  @relation(fields: [villageId], references: [id], onDelete: Cascade)
-  fromVillager Villager @relation("RelationshipFrom", fields: [fromVillagerId], references: [id], onDelete: Cascade)
-  toVillager   Villager @relation("RelationshipTo", fields: [toVillagerId], references: [id], onDelete: Cascade)
-
-  @@index([villageId])
-  @@index([fromVillagerId])
-}
-
-model EventRecord {
-  id        String   @id @default(uuid())
+model Household_legacy {
+  id        String @id @default(uuid())
   villageId String
-  day       Int
-  type      String
-  title     String
-  facts     Json
-  createdAt DateTime @default(now())
-
-  village Village @relation(fields: [villageId], references: [id], onDelete: Cascade)
-
-  @@index([villageId, day])
+  name      String
 }

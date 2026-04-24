@@ -1,117 +1,87 @@
-import { clamp } from './worldGenerator';
-import type { TickContext } from './tickContext';
-import type { CultureState } from '@/lib/domain/types';
+import { clamp } from '@/lib/utils/math';
+import * as C from './coefficients';
+import type { SimulationTickContext } from './tickContext';
 
-// ---------------------------------------------------------------------------
-// Threshold event definitions — fired once when a boundary is newly crossed
-// ---------------------------------------------------------------------------
+// Hofstede cultural dimension drift step.
+// Culture shifts in response to accumulated tick incidents, then
+// mean-reverts toward the experimenter-configured setpoint.
+// Ref: Hofstede (1980, 2001) — Culture's Consequences.
 
-interface ThresholdEvent {
-  field: keyof CultureState;
-  threshold: number;
-  direction: 'up' | 'down';
-  title: string;
-}
+export function stepDriftHofstedeCulture(ctx: SimulationTickContext): void {
+  const { culture, cultureSetpoint, metrics } = ctx;
+  const totalAgents = ctx.agents.filter((a) => !ctx.exitedAgentIds.includes(a.id)).length;
+  if (totalAgents === 0) return;
 
-const THRESHOLD_EVENTS: ThresholdEvent[] = [
-  { field: 'spiritualFear',      threshold: 0.8, direction: 'up',   title: 'A deep fear of the spirit world grips every hearth.' },
-  { field: 'spiritualFear',      threshold: 0.2, direction: 'down', title: 'The old terrors have faded. The village grows bold.' },
-  { field: 'kinLoyaltyNorm',     threshold: 0.8, direction: 'up',   title: 'The village draws tightly inward — family above all else.' },
-  { field: 'sharingNorm',        threshold: 0.2, direction: 'down', title: 'Hoarding has taken hold. Trust in the commons erodes.' },
-  { field: 'ritualIntensity',    threshold: 0.8, direction: 'up',   title: 'Ritual fills every waking hour. The old ways dominate.' },
-  { field: 'outsiderTolerance',  threshold: 0.5, direction: 'up',   title: 'The village opens its gates more readily to those from afar.' },
-  { field: 'punishmentSeverity', threshold: 0.8, direction: 'up',   title: 'Those who transgress are now dealt with without mercy.' },
-];
+  const conflictRate = metrics.conflictCount / totalAgents;
+  const cooperationRate = metrics.cooperationCount / totalAgents;
+  const enforcementRate = metrics.normEnforcementCount / totalAgents;
 
-function checkThresholds(
-  old: CultureState,
-  next: CultureState
-): Array<{ field: string; title: string }> {
-  const crossed: Array<{ field: string; title: string }> = [];
-  for (const te of THRESHOLD_EVENTS) {
-    const oldVal = old[te.field];
-    const newVal = next[te.field];
-    const crosses =
-      te.direction === 'up'
-        ? oldVal < te.threshold && newVal >= te.threshold
-        : oldVal > te.threshold && newVal <= te.threshold;
-    if (crosses) crossed.push({ field: te.field, title: te.title });
-  }
-  return crossed;
-}
-
-// ---------------------------------------------------------------------------
-// Pure computation — exported for testing
-// ---------------------------------------------------------------------------
-
-export function computeCultureDrift(
-  culture: CultureState,
-  deathCount: number,
-  birthCount: number,
-  starving: boolean,
-  hadSpiritIntervention: boolean
-): CultureState {
-  const c = { ...culture };
-
-  // Event-driven drift
-  if (deathCount > 0) {
-    c.spiritualFear  += deathCount * 0.003;
-    c.kinLoyaltyNorm += deathCount * 0.002;
-  }
-  if (birthCount > 0) {
-    c.outsiderTolerance += birthCount * 0.001;
-    c.sharingNorm       += birthCount * 0.001;
-  }
-  if (starving) {
-    c.kinLoyaltyNorm     += 0.004;
-    c.punishmentSeverity += 0.002;
-  }
-  if (hadSpiritIntervention) {
-    c.ritualIntensity += 0.005;
-    c.spiritualFear   += 0.003;
-  }
-
-  // Mean-reversion toward 0.5 at 0.0002/tick
-  const MEAN_REVERSION = 0.0002;
-  for (const key of Object.keys(c) as Array<keyof CultureState>) {
-    c[key] += (0.5 - c[key]) * MEAN_REVERSION;
-    c[key] = clamp(c[key], 0, 1);
-  }
-
-  return c;
-}
-
-// ---------------------------------------------------------------------------
-// Effectful step
-// ---------------------------------------------------------------------------
-
-export function stepDriftCulture(ctx: TickContext): void {
-  if (!ctx.cultureState) return;
-
-  const deathCount = ctx.deadIds.length;
-  const birthCount = ctx.newborns.length;
-  const hadSpiritIntervention = ctx.emittedEvents.some((e) => e.type === 'spirit_intervention');
-
-  const nextCulture = computeCultureDrift(
-    ctx.cultureState,
-    deathCount,
-    birthCount,
-    ctx.starving,
-    hadSpiritIntervention
+  // Power Distance: rises with enforcement (authority asserts itself); falls when cooperation dominates
+  culture.powerDistance = clamp(
+    culture.powerDistance + (enforcementRate * 0.4 - cooperationRate * 0.2) * C.CULTURE_DRIFT_RATE,
+    0, 1
   );
 
-  // Detect threshold crossings and emit events
-  const crossed = checkThresholds(ctx.cultureState, nextCulture);
-  for (const { field, title } of crossed) {
-    ctx.emittedEvents.push({
-      villageId: ctx.villageId,
-      day: ctx.day,
-      type: 'culture_shift',
-      title,
-      facts: { field },
-    });
-  }
+  // Individualism: rises under conflict (competition over cooperation); falls under external stress / group solidarity
+  culture.individualism = clamp(
+    culture.individualism + (conflictRate * 0.3 - cooperationRate * 0.3) * C.CULTURE_DRIFT_RATE,
+    0, 1
+  );
 
-  ctx.cultureState = nextCulture;
-  ctx.updatedCulture = nextCulture;
+  // Masculinity: rises when conflict and enforcement dominate; falls when care and cooperation prevail
+  culture.masculinity = clamp(
+    culture.masculinity + ((conflictRate + enforcementRate) * 0.2 - cooperationRate * 0.3) * C.CULTURE_DRIFT_RATE,
+    0, 1
+  );
+
+  // Uncertainty Avoidance: rises after high-conflict ticks, falls in stable low-conflict periods
+  culture.uncertaintyAvoidance = clamp(
+    culture.uncertaintyAvoidance + (conflictRate * 0.4 - (1 - conflictRate) * 0.1) * C.CULTURE_DRIFT_RATE,
+    0, 1
+  );
+
+  // Long-term Orientation: rises when cooperation builds social capital; falls under panic-driven conflict
+  culture.longTermOrientation = clamp(
+    culture.longTermOrientation + (cooperationRate * 0.3 - conflictRate * 0.4) * C.CULTURE_DRIFT_RATE,
+    0, 1
+  );
+
+  // Mean-revert toward experimenter-configured setpoint (culture is "sticky")
+  culture.powerDistance       = meanRevert(culture.powerDistance, cultureSetpoint.powerDistance);
+  culture.individualism       = meanRevert(culture.individualism, cultureSetpoint.individualism);
+  culture.masculinity         = meanRevert(culture.masculinity, cultureSetpoint.masculinity);
+  culture.uncertaintyAvoidance = meanRevert(culture.uncertaintyAvoidance, cultureSetpoint.uncertaintyAvoidance);
+  culture.longTermOrientation = meanRevert(culture.longTermOrientation, cultureSetpoint.longTermOrientation);
+
+  emitCulturalThresholds(ctx);
+
+  ctx.updatedCulture = { ...culture };
+}
+
+function meanRevert(current: number, setpoint: number): number {
+  return clamp(current + (setpoint - current) * C.CULTURE_MEAN_REVERSION, 0, 1);
+}
+
+function emitCulturalThresholds(ctx: SimulationTickContext): void {
+  const c = ctx.culture;
+  if (c.powerDistance >= 0.85) {
+    ctx.emittedEvents.push({ experimentId: ctx.experimentId, tick: ctx.tick, type: 'culture_threshold',
+      title: 'Rigid hierarchy dominates — questioning authority has become taboo.',
+      facts: { dimension: 'powerDistance', value: c.powerDistance } });
+  }
+  if (c.individualism >= 0.85) {
+    ctx.emittedEvents.push({ experimentId: ctx.experimentId, tick: ctx.tick, type: 'culture_threshold',
+      title: 'Every person for themselves — collective solidarity has collapsed.',
+      facts: { dimension: 'individualism', value: c.individualism } });
+  }
+  if (c.individualism <= 0.15) {
+    ctx.emittedEvents.push({ experimentId: ctx.experimentId, tick: ctx.tick, type: 'culture_threshold',
+      title: 'The group has become paramount — individual interests are suppressed.',
+      facts: { dimension: 'individualism', value: c.individualism } });
+  }
+  if (c.uncertaintyAvoidance >= 0.85) {
+    ctx.emittedEvents.push({ experimentId: ctx.experimentId, tick: ctx.tick, type: 'culture_threshold',
+      title: 'Strict conformity grips the group — deviation is punished harshly.',
+      facts: { dimension: 'uncertaintyAvoidance', value: c.uncertaintyAvoidance } });
+  }
 }
