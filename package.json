@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "migrate": "prisma migrate deploy",
+    "migrate": "prisma migrate resolve --rolled-back 20260424100919_social_psychology_sandbox 2>/dev/null; prisma migrate deploy",
     "local:up": "bash scripts/local-up.sh",
     "local:up:win": "powershell -ExecutionPolicy Bypass -File scripts/local-up.ps1"
   },

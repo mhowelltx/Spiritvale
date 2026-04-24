@@ -1,25 +1,7 @@
-/*
-  Warnings:
+-- Social Psychology Sandbox pivot migration.
+-- EventRecord and RelationshipEdge are altered to use experimentId instead of villageId.
+-- All existing rows are stale (pre-pivot stone-age village data) and are cleared first.
 
-  - You are about to drop the column `day` on the `EventRecord` table. All the data in the column will be lost.
-  - You are about to drop the column `villageId` on the `EventRecord` table. All the data in the column will be lost.
-  - You are about to drop the column `fromVillagerId` on the `RelationshipEdge` table. All the data in the column will be lost.
-  - You are about to drop the column `lastInteractionDay` on the `RelationshipEdge` table. All the data in the column will be lost.
-  - You are about to drop the column `toVillagerId` on the `RelationshipEdge` table. All the data in the column will be lost.
-  - You are about to drop the column `villageId` on the `RelationshipEdge` table. All the data in the column will be lost.
-  - You are about to drop the `CultureState` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Household` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `KinshipLink` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `ResourceState` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Village` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Villager` table. If the table is not empty, all the data it contains will be lost.
-  - Added the required column `experimentId` to the `EventRecord` table without a default value. This is not possible if the table is not empty.
-  - Added the required column `tick` to the `EventRecord` table without a default value. This is not possible if the table is not empty.
-  - Added the required column `experimentId` to the `RelationshipEdge` table without a default value. This is not possible if the table is not empty.
-  - Added the required column `fromAgentId` to the `RelationshipEdge` table without a default value. This is not possible if the table is not empty.
-  - Added the required column `toAgentId` to the `RelationshipEdge` table without a default value. This is not possible if the table is not empty.
-
-*/
 -- DropForeignKey
 ALTER TABLE "CultureState" DROP CONSTRAINT "CultureState_villageId_fkey";
 
@@ -64,6 +46,10 @@ DROP INDEX "RelationshipEdge_fromVillagerId_idx";
 
 -- DropIndex
 DROP INDEX "RelationshipEdge_villageId_idx";
+
+-- Clear stale pre-pivot rows so NOT NULL columns can be added cleanly.
+TRUNCATE TABLE "EventRecord";
+TRUNCATE TABLE "RelationshipEdge";
 
 -- AlterTable
 ALTER TABLE "EventRecord" DROP COLUMN "day",
